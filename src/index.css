@@ -105,3 +105,19 @@
     font: inherit;
   }
 }
+
+@layer utilities {
+  :where(
+      .rounded-none,
+      .rounded-sm,
+      .rounded-md,
+      .rounded-lg,
+      .rounded-xl,
+      .rounded-2xl,
+      .rounded-3xl,
+      .sm\:rounded-lg,
+      .md\:rounded-\[20px\]
+    ):not(.rounded-full) {
+    border-radius: 8px !important;
+  }
+}

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  ArrowBigUpDash,
   ChevronLeft,
   ChevronRight,
   Database,
@@ -318,10 +319,7 @@ function getProgressTone(percent: number) {
   if (percent > 95) {
     return "[&>div]:bg-destructive";
   }
-  if (percent > 85) {
-    return "[&>div]:bg-chart-4";
-  }
-  return "[&>div]:bg-chart-2";
+  return "[&>div]:bg-[#49AEFF]";
 }
 
 function sumCapacity(list: PVC[]) {
@@ -364,6 +362,13 @@ function getStatusDotColor(status: PvcStatus) {
   }
 }
 
+function getDefaultCreateNamespace(selectedNamespace: NamespaceValue): CreatableNamespace {
+  if (selectedNamespace !== "全部命名空间") {
+    return selectedNamespace as CreatableNamespace;
+  }
+  return creatableNamespaces[0];
+}
+
 export default function StorageManagerPrototype() {
   const [pvcsData, setPvcsData] = React.useState<PVC[]>(initialPvcs);
   const [selectedNamespace, setSelectedNamespace] = React.useState<NamespaceValue>("全部命名空间");
@@ -377,13 +382,29 @@ export default function StorageManagerPrototype() {
   const [instanceSearch, setInstanceSearch] = React.useState("");
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
   const [newPvcName, setNewPvcName] = React.useState("");
-  const [newNamespace, setNewNamespace] = React.useState<CreatableNamespace>("default");
+  const [newNamespace, setNewNamespace] = React.useState<CreatableNamespace>(getDefaultCreateNamespace("全部命名空间"));
   const [newCapacityGi, setNewCapacityGi] = React.useState("20");
   const [newAccessMode, setNewAccessMode] = React.useState<AccessMode>("单节点读写");
   const [createError, setCreateError] = React.useState("");
+  const [deletingPvc, setDeletingPvc] = React.useState<PVC | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = React.useState("");
+  const [deleteError, setDeleteError] = React.useState("");
+  const [viewport, setViewport] = React.useState({ width: 0, height: 0 });
 
   const currentView = selectedPvcId ? "文件浏览器" : "全局大盘";
-  const pageSize = 3;
+  const isCompactScreen = viewport.width > 0 && (viewport.width < 1360 || viewport.height < 900);
+  const isVeryCompactHeight = viewport.height > 0 && viewport.height < 780;
+  const pageSize = isVeryCompactHeight ? 2 : 3;
+
+  React.useEffect(() => {
+    const updateViewport = () => {
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    };
+
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
 
   const filteredPvcs = React.useMemo(() => {
     return selectedNamespace === "全部命名空间"
@@ -404,7 +425,11 @@ export default function StorageManagerPrototype() {
   const searchedPvcs = React.useMemo(() => {
     const keyword = instanceSearch.trim().toLowerCase();
     if (!keyword) return filteredPvcs;
-    return filteredPvcs.filter((pvc) => pvc.application.toLowerCase().includes(keyword));
+    return filteredPvcs.filter(
+      (pvc) =>
+        pvc.application.toLowerCase().includes(keyword) ||
+        pvc.name.toLowerCase().includes(keyword),
+    );
   }, [filteredPvcs, instanceSearch]);
 
   const totalCapacity = sumCapacity(filteredPvcs);
@@ -441,8 +466,37 @@ export default function StorageManagerPrototype() {
 
   const openCreateDialog = React.useCallback(() => {
     setCreateError("");
+    setNewNamespace(getDefaultCreateNamespace(selectedNamespace));
     setCreateDialogOpen(true);
+  }, [selectedNamespace]);
+
+  const openDeleteDialog = React.useCallback((pvc: PVC) => {
+    setDeleteError("");
+    setDeleteConfirmName("");
+    setDeletingPvc(pvc);
   }, []);
+
+  const handleDeletePvc = React.useCallback(() => {
+    if (!deletingPvc) return;
+    const inputName = deleteConfirmName.trim();
+    if (!inputName) {
+      setDeleteError("请输入存储卷名称以确认删除");
+      return;
+    }
+    if (inputName !== deletingPvc.name) {
+      setDeleteError("输入名称不匹配，请重新确认");
+      return;
+    }
+
+    setPvcsData((prev) => prev.filter((pvc) => pvc.id !== deletingPvc.id));
+    if (selectedPvcId === deletingPvc.id) {
+      setSelectedPvcId(null);
+      setCurrentPath([]);
+    }
+    setDeletingPvc(null);
+    setDeleteConfirmName("");
+    setDeleteError("");
+  }, [deleteConfirmName, deletingPvc, selectedPvcId]);
 
   const handleCreatePvc = React.useCallback(() => {
     const normalizedName = newPvcName.trim();
@@ -481,11 +535,11 @@ export default function StorageManagerPrototype() {
     setPvcsData((prev) => [nextPvc, ...prev]);
     setCreateDialogOpen(false);
     setNewPvcName("");
-    setNewNamespace("default");
+    setNewNamespace(getDefaultCreateNamespace(selectedNamespace));
     setNewCapacityGi("20");
     setNewAccessMode("单节点读写");
     setCreateError("");
-  }, [newAccessMode, newCapacityGi, newNamespace, newPvcName, pvcsData]);
+  }, [newAccessMode, newCapacityGi, newNamespace, newPvcName, pvcsData, selectedNamespace]);
 
   const browserPathLabel = selectedPvc ? [selectedPvc.mountPath, ...currentPath].join("/") : "";
 
@@ -503,7 +557,12 @@ export default function StorageManagerPrototype() {
     <div className="h-[100dvh] overflow-hidden bg-background p-0 text-foreground md:p-2">
       <div className="h-full w-full">
         <div className="relative flex h-full w-full flex-col rounded-none border border-border bg-card text-card-foreground shadow-none md:rounded-[20px] md:shadow-xl">
-          <div className="relative flex h-full min-h-0 flex-col px-4 py-4 md:px-12 md:py-6">
+          <div
+            className={cn(
+              "relative flex h-full min-h-0 flex-col",
+              isCompactScreen ? "px-4 py-3 md:px-8 md:py-4" : "px-4 py-4 md:px-12 md:py-6",
+            )}
+          >
             <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-border to-transparent md:inset-x-12" />
             <div className="flex h-full min-h-0 flex-col">
               <section
@@ -514,14 +573,15 @@ export default function StorageManagerPrototype() {
                     : "hidden -translate-y-2 opacity-0",
                 )}
               >
-                <div className="flex h-full min-h-0 flex-col gap-4">
-                  <div className="flex flex-col gap-3 border-b border-border pb-4 md:flex-row md:items-end md:justify-between">
+                <div className={cn("flex h-full min-h-0 flex-col", isCompactScreen ? "gap-3" : "gap-4")}>
+                  <div
+                    className={cn(
+                      "flex flex-col border-b border-border md:flex-row md:items-end md:justify-between",
+                      isCompactScreen ? "gap-2 pb-3" : "gap-3 pb-4",
+                    )}
+                  >
                     <div>
-                      <div className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
-                        <HardDrive className="h-3.5 w-3.5" />
-                        存储资源全局视图
-                      </div>
-                      <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-foreground">存储管家</h1>
+                      <h1 className={cn("font-semibold tracking-tight text-foreground", isCompactScreen ? "text-[26px]" : "text-[28px]")}>存储管家</h1>
                       <p className="mt-1 text-sm text-muted-foreground">统一查看各命名空间的存储卷状态、容量健康度与资源浪费情况。</p>
                     </div>
 
@@ -547,34 +607,34 @@ export default function StorageManagerPrototype() {
                     </div>
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className={cn("grid md:grid-cols-3", isCompactScreen ? "gap-2.5" : "gap-3")}>
                     <Card className="rounded-2xl border-border shadow-sm">
-                      <CardHeader className="p-4 pb-2">
+                      <CardHeader className={cn(isCompactScreen ? "p-3 pb-1.5" : "p-4 pb-2")}>
                         <CardDescription>总分配容量</CardDescription>
-                        <CardTitle className="text-[28px]">{totalCapacity} Gi</CardTitle>
+                        <CardTitle className={cn(isCompactScreen ? "text-[24px]" : "text-[28px]")}>{totalCapacity} Gi</CardTitle>
                       </CardHeader>
-                      <CardContent className="p-4 pt-0 text-sm text-muted-foreground">当前筛选范围内已分配的全部持久化容量。</CardContent>
+                      <CardContent className={cn("text-sm text-muted-foreground", isCompactScreen ? "p-3 pt-0" : "p-4 pt-0")}>当前筛选范围内已分配的全部持久化容量。</CardContent>
                     </Card>
 
                     <Card className="rounded-2xl border-border shadow-sm">
-                      <CardHeader className="p-4 pb-2">
+                      <CardHeader className={cn(isCompactScreen ? "p-3 pb-1.5" : "p-4 pb-2")}>
                         <CardDescription>已使用容量</CardDescription>
-                        <CardTitle className="text-[28px]">{totalUsed} Gi</CardTitle>
+                        <CardTitle className={cn(isCompactScreen ? "text-[24px]" : "text-[28px]")}>{totalUsed} Gi</CardTitle>
                       </CardHeader>
-                      <CardContent className="p-4 pt-0 text-sm text-muted-foreground">依据存储卷使用率估算的实时已使用空间。</CardContent>
+                      <CardContent className={cn("text-sm text-muted-foreground", isCompactScreen ? "p-3 pt-0" : "p-4 pt-0")}>依据存储卷使用率估算的实时已使用空间。</CardContent>
                     </Card>
 
                     <Card className="rounded-2xl border-border shadow-sm">
-                      <CardHeader className="p-4 pb-2">
+                      <CardHeader className={cn(isCompactScreen ? "p-3 pb-1.5" : "p-4 pb-2")}>
                         <CardDescription>闲置资源</CardDescription>
-                        <CardTitle className="text-[28px] text-chart-4">{totalWaste} Gi</CardTitle>
+                        <CardTitle className={cn("text-chart-4", isCompactScreen ? "text-[24px]" : "text-[28px]")}>{totalWaste} Gi</CardTitle>
                       </CardHeader>
-                      <CardContent className="p-4 pt-0 text-sm text-muted-foreground">处于未使用状态、可能造成浪费的已分配容量。</CardContent>
+                      <CardContent className={cn("text-sm text-muted-foreground", isCompactScreen ? "p-3 pt-0" : "p-4 pt-0")}>处于未使用状态、可能造成浪费的已分配容量。</CardContent>
                     </Card>
                   </div>
 
                   <Card className="flex min-h-0 flex-1 flex-col rounded-2xl border-border bg-muted/30 shadow-sm">
-                    <CardHeader className="flex flex-col gap-3 p-4 pb-2">
+                    <CardHeader className="flex flex-col gap-4 px-5 pb-3 pt-5 md:px-6 md:pt-6">
                       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                         <div>
                           <CardTitle>存储卷列表</CardTitle>
@@ -586,24 +646,24 @@ export default function StorageManagerPrototype() {
                             value={instanceSearch}
                             onChange={(event) => setInstanceSearch(event.target.value)}
                             className="pl-9"
-                            placeholder="搜索挂载实例名称，如 mysql-prod"
+                            placeholder="可搜索存储卷或挂载实例名称"
                           />
                         </div>
                       </div>
                     </CardHeader>
 
-                    <CardContent className="flex min-h-0 flex-1 flex-col p-4 pt-3">
-                      <div className="rounded-xl border border-border bg-card px-5 py-1 shadow-sm">
-                        <div className="grid min-h-9 grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] items-center gap-4 text-sm text-muted-foreground">
+                    <CardContent className={cn("flex min-h-0 flex-1 flex-col md:px-6", isCompactScreen ? "px-4 pb-4 pt-3 md:pb-4" : "px-5 pb-5 pt-4 md:pb-6")}>
+                      <div className="rounded-xl border border-border bg-card px-5 py-2 shadow-sm md:px-6">
+                        <div className="grid min-h-10 grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] items-center gap-4 text-sm font-semibold text-muted-foreground">
                           <div>存储卷名称</div>
                           <div>状态</div>
                           <div>容量与使用率</div>
                           <div>访问模式</div>
-                          <div className="text-right">操作</div>
+                          <div className="text-left">操作</div>
                         </div>
                       </div>
 
-                      <div className="mt-3 flex flex-col gap-3">
+                      <div className={cn(isCompactScreen ? "mt-3 flex flex-col gap-3" : "mt-4 flex flex-col gap-4")}>
                         {pagedPvcs.length > 0 ? pagedPvcs.map((pvc) => {
                           const usagePercent = getUsagePercent(pvc);
                           const isExpandable = usagePercent > 85 || pvc.status === "异常";
@@ -612,7 +672,10 @@ export default function StorageManagerPrototype() {
                           return (
                             <div
                               key={pvc.id}
-                              className="grid grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] gap-4 rounded-xl border border-border bg-card px-5 py-4 shadow-sm transition-colors hover:bg-accent/40"
+                              className={cn(
+                                "grid grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] gap-4 rounded-xl border border-border bg-card px-5 shadow-sm transition-colors hover:bg-accent/40 md:px-6",
+                                isCompactScreen ? "py-3.5" : "py-4",
+                              )}
                             >
                               <div className="flex items-center gap-3 self-center">
                                 <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
@@ -651,9 +714,9 @@ export default function StorageManagerPrototype() {
                                 </div>
                               </div>
 
-                              <div className="self-center text-sm text-muted-foreground">{pvc.accessMode}</div>
+                              <div className="self-center text-sm text-foreground">{pvc.accessMode}</div>
 
-                              <div className="flex items-center justify-end gap-2 self-center">
+                              <div className="flex items-center justify-start gap-2 self-center">
                                 <Button
                                   className="h-9 rounded-lg bg-black px-3 text-sm font-semibold text-white hover:bg-black/90"
                                   onClick={() => openBrowser(pvc)}
@@ -667,19 +730,37 @@ export default function StorageManagerPrototype() {
                                       <MoreHorizontal className="h-4 w-4" />
                                     </Button>
                                   </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-48">
+                                  <DropdownMenuContent align="end" className="w-44 rounded-xl p-2 shadow-lg">
                                     <DropdownMenuItem
-                                      className={cn(isExpandable && "bg-accent text-accent-foreground")}
+                                      className={cn(
+                                        "h-9 rounded-md px-2 text-sm",
+                                        isExpandable && "text-chart-4",
+                                      )}
                                       onClick={() => openExpandDialog(pvc)}
                                     >
-                                      扩容
+                                      <ArrowBigUpDash className="mr-2 h-4 w-4 text-muted-foreground" />
+                                      <span>扩容</span>
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
                                       disabled={!canDelete}
-                                      className={cn(pvc.status === "未使用" && "text-destructive focus:bg-accent focus:text-destructive")}
+                                      className={cn(
+                                        "h-9 rounded-md px-2 text-sm",
+                                        pvc.status === "未使用" && "text-destructive focus:bg-accent focus:text-destructive",
+                                      )}
+                                      onClick={() => {
+                                        if (canDelete) {
+                                          openDeleteDialog(pvc);
+                                        }
+                                      }}
                                     >
-                                      删除
+                                      <Trash2
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          !canDelete ? "text-muted-foreground" : pvc.status === "未使用" ? "text-destructive" : "text-muted-foreground",
+                                        )}
+                                      />
+                                      <span>删除</span>
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -687,13 +768,13 @@ export default function StorageManagerPrototype() {
                             </div>
                           );
                         }) : (
-                          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
-                            未找到与该实例名称匹配的存储卷
+                          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground md:px-6">
+                            未找到与关键词匹配的存储卷
                           </div>
                         )}
                       </div>
 
-                      <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className={cn("flex flex-col gap-3 border-t border-border sm:flex-row sm:items-center sm:justify-between", isCompactScreen ? "mt-3 pt-3" : "mt-4 pt-4")}>
                         <div className="text-sm text-muted-foreground">
                           {searchedPvcs.length > 0
                             ? `显示第 ${(dashboardPage - 1) * pageSize + 1}-${Math.min(dashboardPage * pageSize, searchedPvcs.length)} 条，共 ${searchedPvcs.length} 条`
@@ -1084,10 +1165,70 @@ export default function StorageManagerPrototype() {
                 <Button variant="outline" className="rounded-xl border-border" onClick={() => setExpandingPvc(null)}>
                   取消
                 </Button>
-                <Button className="rounded-xl">确认扩容</Button>
+                <Button className="rounded-xl bg-black text-white hover:bg-black/90">确认扩容</Button>
               </DialogFooter>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(deletingPvc)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeletingPvc(null);
+            setDeleteConfirmName("");
+            setDeleteError("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl rounded-3xl border-border">
+          <DialogHeader>
+            <DialogTitle className="text-xl">确认删除存储卷</DialogTitle>
+            <DialogDescription>
+              删除后将无法恢复。请输入存储卷名称以确认删除操作。
+            </DialogDescription>
+          </DialogHeader>
+
+          {deletingPvc && (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-border bg-accent p-4 text-sm text-accent-foreground">
+                将要删除：<span className="font-semibold text-foreground">{deletingPvc.name}</span>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-foreground">
+                  请输入 <span className="font-semibold">{deletingPvc.name}</span> 进行确认
+                </div>
+                <Input
+                  value={deleteConfirmName}
+                  onChange={(event) => setDeleteConfirmName(event.target.value)}
+                  placeholder="输入完整存储卷名称"
+                />
+                {deleteError ? <div className="text-sm text-destructive">{deleteError}</div> : null}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="rounded-xl border-border"
+              onClick={() => {
+                setDeletingPvc(null);
+                setDeleteConfirmName("");
+                setDeleteError("");
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDeletePvc}
+            >
+              确认删除
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
