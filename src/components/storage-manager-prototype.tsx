@@ -2,24 +2,25 @@
 
 import * as React from "react";
 import {
+  ArrowUpDown,
+  ChevronDown,
   ArrowBigUpDash,
   ChevronLeft,
   ChevronRight,
   Database,
   Download,
   Edit3,
-  File,
+  FileCode2,
+  FileText,
   Folder,
-  HardDrive,
+  FolderOpen,
   MoreHorizontal,
   Plus,
-  RefreshCw,
   Search,
   Trash2,
   Upload,
 } from "lucide-react";
 
-import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -77,6 +78,22 @@ type FileNode = {
   content?: string;
   children?: FileNode[];
 };
+
+type FileTreeRow = {
+  node: FileNode;
+  depth: number;
+  path: string[];
+};
+
+type FolderOption = {
+  key: string;
+  label: string;
+  path: string[];
+};
+
+type FileSortField = "名称" | "大小" | "修改时间";
+type NameSortMode = "首字母" | "类型";
+type SortDirection = "asc" | "desc";
 
 const namespaces = ["全部命名空间", "default", "sealos-system", "user-db-proj"] as const;
 type NamespaceValue = (typeof namespaces)[number];
@@ -146,7 +163,7 @@ const initialPvcs: PVC[] = [
   },
 ];
 
-const filesByPvcId: Record<string, FileNode[]> = {
+const initialFilesByPvcId: Record<string, FileNode[]> = {
   "pvc-1": [
     {
       id: "mysql-conf",
@@ -336,18 +353,6 @@ function sumWaste(list: PVC[]) {
     .reduce((total, pvc) => total + pvc.capacityGi, 0);
 }
 
-function findNodeByPath(nodes: FileNode[], path: string[]): FileNode[] {
-  if (path.length === 0) return nodes;
-  let current = nodes;
-
-  for (const segment of path) {
-    const next = current.find((node) => node.type === "目录" && node.name === segment);
-    current = next?.children ?? [];
-  }
-
-  return current;
-}
-
 function getStatusDotColor(status: PvcStatus) {
   switch (status) {
     case "已挂载":
@@ -369,11 +374,150 @@ function getDefaultCreateNamespace(selectedNamespace: NamespaceValue): Creatable
   return creatableNamespaces[0];
 }
 
+function collectFolderOptions(nodes: FileNode[], prefix: string[] = []): FolderOption[] {
+  const options: FolderOption[] = [];
+  for (const node of nodes) {
+    if (node.type !== "目录") continue;
+    const path = [...prefix, node.name];
+    options.push({
+      key: path.join("/") || "__root__",
+      label: `/${path.join("/")}`,
+      path,
+    });
+    options.push(...collectFolderOptions(node.children ?? [], path));
+  }
+  return options;
+}
+
+function addFolderToPath(nodes: FileNode[], targetPath: string[], folder: FileNode): FileNode[] {
+  if (targetPath.length === 0) {
+    return [folder, ...nodes];
+  }
+
+  const [current, ...rest] = targetPath;
+  return nodes.map((node) => {
+    if (node.type !== "目录" || node.name !== current) {
+      return node;
+    }
+
+    return {
+      ...node,
+      children: addFolderToPath(node.children ?? [], rest, folder),
+    };
+  });
+}
+
+function addFileToPath(nodes: FileNode[], targetPath: string[], file: FileNode): FileNode[] {
+  if (targetPath.length === 0) {
+    return [file, ...nodes];
+  }
+
+  const [current, ...rest] = targetPath;
+  return nodes.map((node) => {
+    if (node.type !== "目录" || node.name !== current) {
+      return node;
+    }
+
+    return {
+      ...node,
+      children: addFileToPath(node.children ?? [], rest, file),
+    };
+  });
+}
+
+function getFolderIdsByPath(nodes: FileNode[], path: string[]): string[] {
+  if (path.length === 0) return [];
+  const ids: string[] = [];
+  let currentNodes = nodes;
+
+  for (const segment of path) {
+    const target = currentNodes.find((node) => node.type === "目录" && node.name === segment);
+    if (!target) break;
+    ids.push(target.id);
+    currentNodes = target.children ?? [];
+  }
+
+  return ids;
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = bytes;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const rounded = size >= 10 || unitIndex === 0 ? Math.round(size) : Number(size.toFixed(1));
+  return `${rounded} ${units[unitIndex]}`;
+}
+
+function parseSizeToBytes(size?: string): number {
+  if (!size || size === "--") return 0;
+  const match = size.trim().match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i);
+  if (!match) return 0;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return 0;
+  const unit = match[2].toUpperCase();
+  const powerMap: Record<string, number> = { B: 0, KB: 1, MB: 2, GB: 3, TB: 4 };
+  return value * 1024 ** (powerMap[unit] ?? 0);
+}
+
+function parseModifiedAtToWeight(modifiedAt: string): number {
+  const text = modifiedAt.trim();
+  if (text === "刚刚") return Date.now();
+
+  const todayMatch = text.match(/^今天\s+(\d{1,2}):(\d{2})$/);
+  if (todayMatch) {
+    const now = new Date();
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(todayMatch[1]), Number(todayMatch[2]), 0, 0);
+    return date.getTime();
+  }
+
+  const yesterdayMatch = text.match(/^昨天\s+(\d{1,2}):(\d{2})$/);
+  if (yesterdayMatch) {
+    const now = new Date();
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, Number(yesterdayMatch[1]), Number(yesterdayMatch[2]), 0, 0);
+    return date.getTime();
+  }
+
+  const daysAgoMatch = text.match(/^(\d+)\s*天前$/);
+  if (daysAgoMatch) {
+    const now = new Date();
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - Number(daysAgoMatch[1]), 12, 0, 0, 0);
+    return date.getTime();
+  }
+
+  return 0;
+}
+
+function getFileTypeRank(node: FileNode): number {
+  if (node.type === "目录") return 0;
+  const dotIndex = node.name.lastIndexOf(".");
+  const extension = dotIndex >= 0 ? node.name.slice(dotIndex + 1).toLowerCase() : "";
+  const rankMap: Record<string, number> = {
+    cnf: 1,
+    conf: 1,
+    ini: 1,
+    yaml: 2,
+    yml: 2,
+    json: 3,
+    log: 4,
+    txt: 5,
+    sql: 6,
+    gz: 7,
+  };
+  return rankMap[extension] ?? 99;
+}
+
 export default function StorageManagerPrototype() {
   const [pvcsData, setPvcsData] = React.useState<PVC[]>(initialPvcs);
+  const [filesByPvcId, setFilesByPvcId] = React.useState<Record<string, FileNode[]>>(initialFilesByPvcId);
   const [selectedNamespace, setSelectedNamespace] = React.useState<NamespaceValue>("全部命名空间");
   const [selectedPvcId, setSelectedPvcId] = React.useState<string | null>(null);
   const [currentPath, setCurrentPath] = React.useState<string[]>([]);
+  const [expandedFolderIds, setExpandedFolderIds] = React.useState<Set<string>>(new Set());
   const [editorFile, setEditorFile] = React.useState<FileNode | null>(null);
   const [editorContent, setEditorContent] = React.useState("");
   const [expandingPvc, setExpandingPvc] = React.useState<PVC | null>(null);
@@ -389,7 +533,20 @@ export default function StorageManagerPrototype() {
   const [deletingPvc, setDeletingPvc] = React.useState<PVC | null>(null);
   const [deleteConfirmName, setDeleteConfirmName] = React.useState("");
   const [deleteError, setDeleteError] = React.useState("");
+  const [createFolderDialogOpen, setCreateFolderDialogOpen] = React.useState(false);
+  const [newFolderName, setNewFolderName] = React.useState("");
+  const [newFolderPathKey, setNewFolderPathKey] = React.useState("__root__");
+  const [createFolderError, setCreateFolderError] = React.useState("");
+  const [uploadDialogOpen, setUploadDialogOpen] = React.useState(false);
+  const [uploadSelectedFile, setUploadSelectedFile] = React.useState<File | null>(null);
+  const [uploadPathKey, setUploadPathKey] = React.useState("__root__");
+  const [uploadError, setUploadError] = React.useState("");
+  const [highlightNodeId, setHighlightNodeId] = React.useState<string | null>(null);
+  const [fileSortField, setFileSortField] = React.useState<FileSortField>("修改时间");
+  const [fileSortDirection, setFileSortDirection] = React.useState<SortDirection>("desc");
+  const [nameSortMode, setNameSortMode] = React.useState<NameSortMode>("首字母");
   const [viewport, setViewport] = React.useState({ width: 0, height: 0 });
+  const uploadInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const currentView = selectedPvcId ? "文件浏览器" : "全局大盘";
   const isCompactScreen = viewport.width > 0 && (viewport.width < 1360 || viewport.height < 900);
@@ -416,11 +573,47 @@ export default function StorageManagerPrototype() {
     return pvcsData.find((pvc) => pvc.id === selectedPvcId) ?? null;
   }, [selectedPvcId, pvcsData]);
 
-  const currentFiles = React.useMemo(() => {
+  const rootFiles = React.useMemo(() => {
     if (!selectedPvc) return [];
-    const rootNodes = filesByPvcId[selectedPvc.id] ?? [];
-    return findNodeByPath(rootNodes, currentPath);
-  }, [selectedPvc, currentPath]);
+    return filesByPvcId[selectedPvc.id] ?? [];
+  }, [filesByPvcId, selectedPvc]);
+
+  const currentFiles = React.useMemo(() => {
+    const rows: FileTreeRow[] = [];
+
+    const compareNode = (a: FileNode, b: FileNode) => {
+      let result = 0;
+      if (fileSortField === "大小") {
+        result = parseSizeToBytes(a.size) - parseSizeToBytes(b.size);
+      } else if (fileSortField === "修改时间") {
+        result = parseModifiedAtToWeight(a.modifiedAt) - parseModifiedAtToWeight(b.modifiedAt);
+      } else if (nameSortMode === "类型") {
+        const typeRankDiff = getFileTypeRank(a) - getFileTypeRank(b);
+        result = typeRankDiff !== 0 ? typeRankDiff : a.name.localeCompare(b.name, "zh-Hans-CN");
+      } else {
+        result = a.name.localeCompare(b.name, "zh-Hans-CN");
+      }
+      return fileSortDirection === "asc" ? result : -result;
+    };
+
+    const walk = (nodes: FileNode[], depth: number, pathPrefix: string[]) => {
+      const orderedNodes = [...nodes].sort(compareNode);
+      for (const node of orderedNodes) {
+        const path = [...pathPrefix, node.name];
+        rows.push({ node, depth, path });
+        if (node.type === "目录" && expandedFolderIds.has(node.id) && node.children && node.children.length > 0) {
+          walk(node.children, depth + 1, path);
+        }
+      }
+    };
+    walk(rootFiles, 0, []);
+    return rows;
+  }, [expandedFolderIds, fileSortDirection, fileSortField, nameSortMode, rootFiles]);
+
+  const folderOptions = React.useMemo(() => {
+    const options: FolderOption[] = [{ key: "__root__", label: "/", path: [] }];
+    return [...options, ...collectFolderOptions(rootFiles)];
+  }, [rootFiles]);
 
   const searchedPvcs = React.useMemo(() => {
     const keyword = instanceSearch.trim().toLowerCase();
@@ -447,11 +640,13 @@ export default function StorageManagerPrototype() {
   const openBrowser = React.useCallback((pvc: PVC) => {
     setSelectedPvcId(pvc.id);
     setCurrentPath([]);
+    setExpandedFolderIds(new Set());
   }, []);
 
   const returnToDashboard = React.useCallback(() => {
     setSelectedPvcId(null);
     setCurrentPath([]);
+    setExpandedFolderIds(new Set());
   }, []);
 
   const openEditor = React.useCallback((file: FileNode) => {
@@ -469,6 +664,29 @@ export default function StorageManagerPrototype() {
     setNewNamespace(getDefaultCreateNamespace(selectedNamespace));
     setCreateDialogOpen(true);
   }, [selectedNamespace]);
+
+  const openCreateFolderDialog = React.useCallback(() => {
+    if (!selectedPvc) return;
+    setCreateFolderError("");
+    setNewFolderName("");
+    const currentKey = currentPath.length > 0 ? currentPath.join("/") : "__root__";
+    const matched = folderOptions.some((option) => option.key === currentKey);
+    setNewFolderPathKey(matched ? currentKey : "__root__");
+    setCreateFolderDialogOpen(true);
+  }, [currentPath, folderOptions, selectedPvc]);
+
+  const openUploadDialog = React.useCallback(() => {
+    if (!selectedPvc) return;
+    setUploadError("");
+    setUploadSelectedFile(null);
+    if (uploadInputRef.current) {
+      uploadInputRef.current.value = "";
+    }
+    const currentKey = currentPath.length > 0 ? currentPath.join("/") : "__root__";
+    const matched = folderOptions.some((option) => option.key === currentKey);
+    setUploadPathKey(matched ? currentKey : "__root__");
+    setUploadDialogOpen(true);
+  }, [currentPath, folderOptions, selectedPvc]);
 
   const openDeleteDialog = React.useCallback((pvc: PVC) => {
     setDeleteError("");
@@ -541,7 +759,134 @@ export default function StorageManagerPrototype() {
     setCreateError("");
   }, [newAccessMode, newCapacityGi, newNamespace, newPvcName, pvcsData, selectedNamespace]);
 
-  const browserPathLabel = selectedPvc ? [selectedPvc.mountPath, ...currentPath].join("/") : "";
+  const handleCreateFolder = React.useCallback(() => {
+    if (!selectedPvc) return;
+    const normalizedName = newFolderName.trim();
+    if (!normalizedName) {
+      setCreateFolderError("请填写文件夹名称");
+      return;
+    }
+
+    const targetOption = folderOptions.find((option) => option.key === newFolderPathKey) ?? folderOptions[0];
+    const targetPath = targetOption.path;
+    const siblings = targetPath.length === 0
+      ? rootFiles
+      : targetPath.reduce<FileNode[]>((nodes, segment) => {
+          const folder = nodes.find((node) => node.type === "目录" && node.name === segment);
+          return folder?.children ?? [];
+        }, rootFiles);
+
+    const duplicated = siblings.some((node) => node.type === "目录" && node.name === normalizedName);
+    if (duplicated) {
+      setCreateFolderError("同一目录下已存在同名文件夹");
+      return;
+    }
+
+    const folderId = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const nextFolder: FileNode = {
+      id: folderId,
+      name: normalizedName,
+      type: "目录",
+      modifiedAt: "刚刚",
+      children: [],
+    };
+
+    setFilesByPvcId((prev) => {
+      const pvcFiles = prev[selectedPvc.id] ?? [];
+      return {
+        ...prev,
+        [selectedPvc.id]: addFolderToPath(pvcFiles, targetPath, nextFolder),
+      };
+    });
+
+    const expandedIds = getFolderIdsByPath(rootFiles, targetPath);
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      expandedIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setCurrentPath(targetPath);
+    setHighlightNodeId(folderId);
+    window.setTimeout(() => {
+      setHighlightNodeId((prev) => (prev === folderId ? null : prev));
+    }, 1800);
+    setCreateFolderDialogOpen(false);
+    setNewFolderName("");
+    setNewFolderPathKey("__root__");
+    setCreateFolderError("");
+  }, [folderOptions, newFolderName, newFolderPathKey, rootFiles, selectedPvc]);
+
+  const handleUploadFile = React.useCallback(() => {
+    if (!selectedPvc) return;
+    if (!uploadSelectedFile) {
+      setUploadError("请先选择要上传的文件");
+      return;
+    }
+    const normalizedName = uploadSelectedFile.name.trim();
+    if (!normalizedName) {
+      setUploadError("文件名称无效，请重新选择");
+      return;
+    }
+
+    const targetOption = folderOptions.find((option) => option.key === uploadPathKey) ?? folderOptions[0];
+    const targetPath = targetOption.path;
+    const siblings = targetPath.length === 0
+      ? rootFiles
+      : targetPath.reduce<FileNode[]>((nodes, segment) => {
+          const folder = nodes.find((node) => node.type === "目录" && node.name === segment);
+          return folder?.children ?? [];
+        }, rootFiles);
+
+    const duplicated = siblings.some((node) => node.name === normalizedName);
+    if (duplicated) {
+      setUploadError("同一目录下已存在同名文件或文件夹");
+      return;
+    }
+
+    const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const nextFile: FileNode = {
+      id: fileId,
+      name: normalizedName,
+      type: "文件",
+      size: formatFileSize(uploadSelectedFile.size),
+      modifiedAt: "刚刚",
+      editable: /\.(cnf|conf|ini|yaml|yml|json|txt|log)$/i.test(normalizedName),
+      content: `# ${normalizedName}\n# 这是模拟上传的文件内容`,
+    };
+
+    setFilesByPvcId((prev) => {
+      const pvcFiles = prev[selectedPvc.id] ?? [];
+      return {
+        ...prev,
+        [selectedPvc.id]: addFileToPath(pvcFiles, targetPath, nextFile),
+      };
+    });
+
+    const expandedIds = getFolderIdsByPath(rootFiles, targetPath);
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      expandedIds.forEach((id) => next.add(id));
+      return next;
+    });
+    setCurrentPath(targetPath);
+    setHighlightNodeId(fileId);
+    window.setTimeout(() => {
+      setHighlightNodeId((prev) => (prev === fileId ? null : prev));
+    }, 1800);
+    setUploadDialogOpen(false);
+    setUploadSelectedFile(null);
+    setUploadPathKey("__root__");
+    setUploadError("");
+  }, [folderOptions, rootFiles, selectedPvc, uploadPathKey, uploadSelectedFile]);
+
+  const toggleSortField = React.useCallback((field: FileSortField) => {
+    if (fileSortField === field) {
+      setFileSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setFileSortField(field);
+    setFileSortDirection(field === "修改时间" ? "desc" : "asc");
+  }, [fileSortField]);
 
   React.useEffect(() => {
     setDashboardPage(1);
@@ -744,10 +1089,7 @@ export default function StorageManagerPrototype() {
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem
                                       disabled={!canDelete}
-                                      className={cn(
-                                        "h-9 rounded-md px-2 text-sm",
-                                        pvc.status === "未使用" && "text-destructive focus:bg-accent focus:text-destructive",
-                                      )}
+                                      className="h-9 rounded-md px-2 text-sm text-destructive focus:bg-accent focus:text-destructive data-[disabled]:text-destructive/50"
                                       onClick={() => {
                                         if (canDelete) {
                                           openDeleteDialog(pvc);
@@ -757,7 +1099,7 @@ export default function StorageManagerPrototype() {
                                       <Trash2
                                         className={cn(
                                           "mr-2 h-4 w-4",
-                                          !canDelete ? "text-muted-foreground" : pvc.status === "未使用" ? "text-destructive" : "text-muted-foreground",
+                                          canDelete ? "text-destructive" : "text-destructive/50",
                                         )}
                                       />
                                       <span>删除</span>
@@ -819,72 +1161,24 @@ export default function StorageManagerPrototype() {
               >
                 {selectedPvc && (
                   <div className="flex h-full min-h-0 flex-col gap-6">
-                    <div className="flex flex-col gap-4 border-b border-border pb-6">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div className="flex items-center gap-3">
-                          <Button variant="ghost" className="rounded-xl px-3 text-muted-foreground" onClick={returnToDashboard}>
-                            <ChevronLeft className="mr-1 h-4 w-4" />
-                            返回大盘
-                          </Button>
-
-                          <div className="hidden h-5 w-px bg-border md:block" />
-
-                          <Breadcrumb>
-                            <BreadcrumbList>
-                              <BreadcrumbItem>
-                                <BreadcrumbPage>存储管家</BreadcrumbPage>
-                              </BreadcrumbItem>
-                              <BreadcrumbSeparator>
-                                <ChevronRight className="h-3.5 w-3.5" />
-                              </BreadcrumbSeparator>
-                              <BreadcrumbItem>
-                                <BreadcrumbPage>{selectedPvc.namespace}</BreadcrumbPage>
-                              </BreadcrumbItem>
-                              <BreadcrumbSeparator>
-                                <ChevronRight className="h-3.5 w-3.5" />
-                              </BreadcrumbSeparator>
-                              <BreadcrumbItem>
-                                <BreadcrumbPage>{selectedPvc.name}</BreadcrumbPage>
-                              </BreadcrumbItem>
-                              <BreadcrumbSeparator>
-                                <ChevronRight className="h-3.5 w-3.5" />
-                              </BreadcrumbSeparator>
-                              <BreadcrumbItem>
-                                <BreadcrumbPage>{selectedPvc.mountPath}</BreadcrumbPage>
-                              </BreadcrumbItem>
-                            </BreadcrumbList>
-                          </Breadcrumb>
-                        </div>
-
-                        <div className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs text-muted-foreground">
-                          <HardDrive className="h-3.5 w-3.5 text-chart-2" />
-                          当前路径：{browserPathLabel}
-                        </div>
-                      </div>
-                    </div>
-
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <Button
-                        variant="outline"
-                        className="w-full rounded-xl border-border md:w-auto"
-                        onClick={() => setCurrentPath((prev) => prev.slice(0, -1))}
-                        disabled={currentPath.length === 0}
+                        variant="ghost"
+                        className="w-full rounded-xl px-3 text-muted-foreground md:w-auto"
+                        onClick={returnToDashboard}
                       >
                         <ChevronLeft className="mr-1 h-4 w-4" />
-                        返回上一级
+                        返回列表
                       </Button>
 
                       <div className="flex flex-wrap items-center gap-2">
-                        <Button className="rounded-xl bg-black text-white hover:bg-black/90">
+                        <Button className="rounded-xl bg-black text-white hover:bg-black/90" onClick={openUploadDialog}>
                           <Upload className="mr-1.5 h-4 w-4" />
                           上传文件
                         </Button>
-                        <Button variant="outline" className="rounded-xl border-border">
+                        <Button variant="outline" className="rounded-xl border-border" onClick={openCreateFolderDialog}>
                           <Plus className="mr-1.5 h-4 w-4" />
                           新建文件夹
-                        </Button>
-                        <Button variant="outline" size="icon" className="rounded-xl border-border">
-                          <RefreshCw className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
@@ -899,63 +1193,185 @@ export default function StorageManagerPrototype() {
                           <Table>
                             <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
                               <TableRow>
-                                <TableHead className="w-[320px]">名称</TableHead>
-                                <TableHead>大小</TableHead>
-                                <TableHead>最后修改时间</TableHead>
-                                <TableHead className="text-right">操作</TableHead>
+                                <TableHead className="w-[320px] font-semibold text-foreground">
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      className="h-7 px-2 text-sm font-semibold text-foreground hover:bg-accent"
+                                      onClick={() => toggleSortField("名称")}
+                                    >
+                                      名称
+                                      <ArrowUpDown className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
+                                    </Button>
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" className="h-7 px-2 text-xs text-muted-foreground hover:bg-accent">
+                                          {nameSortMode}
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="start" className="w-36 rounded-xl p-2 shadow-lg">
+                                        <DropdownMenuItem
+                                          className="h-9 rounded-md px-2 text-sm"
+                                          onClick={() => {
+                                            setNameSortMode("首字母");
+                                            setFileSortField("名称");
+                                          }}
+                                        >
+                                          按首字母排序
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          className="h-9 rounded-md px-2 text-sm"
+                                          onClick={() => {
+                                            setNameSortMode("类型");
+                                            setFileSortField("名称");
+                                          }}
+                                        >
+                                          按类型排序
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                </TableHead>
+                                <TableHead className="text-left font-semibold text-foreground">
+                                  <Button
+                                    variant="ghost"
+                                    className="h-7 justify-start px-0 text-sm font-semibold text-foreground hover:bg-accent"
+                                    onClick={() => toggleSortField("大小")}
+                                  >
+                                    大小
+                                    <ArrowUpDown className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
+                                  </Button>
+                                </TableHead>
+                                <TableHead className="text-left font-semibold text-foreground">
+                                  <Button
+                                    variant="ghost"
+                                    className="h-7 justify-start px-0 text-sm font-semibold text-foreground hover:bg-accent"
+                                    onClick={() => toggleSortField("修改时间")}
+                                  >
+                                    最后修改时间
+                                    <ArrowUpDown className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
+                                  </Button>
+                                </TableHead>
+                                <TableHead className="text-left font-semibold text-foreground">操作</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {currentFiles.length > 0 ? (
-                                currentFiles.map((node) => (
+                                currentFiles.map(({ node, depth, path }) => {
+                                  const isFolder = node.type === "目录";
+                                  const hasChildren = Boolean(node.children && node.children.length > 0);
+                                  const isExpanded = isFolder && expandedFolderIds.has(node.id);
+                                  const isActiveFolder = isFolder && path.join("/") === currentPath.join("/");
+
+                                  return (
                                   <TableRow
                                     key={node.id}
-                                    className="group cursor-pointer transition-colors hover:bg-accent/40"
+                                    className={cn(
+                                      "group cursor-pointer transition-colors hover:bg-accent/40",
+                                      highlightNodeId === node.id && "bg-accent/60",
+                                    )}
                                     onDoubleClick={() => {
-                                      if (node.type === "目录") {
-                                        setCurrentPath((prev) => [...prev, node.name]);
+                                      if (!isFolder) return;
+                                      setCurrentPath(path);
+                                      if (hasChildren) {
+                                        setExpandedFolderIds((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(node.id)) {
+                                            next.delete(node.id);
+                                          } else {
+                                            next.add(node.id);
+                                          }
+                                          return next;
+                                        });
                                       }
                                     }}
                                   >
                                     <TableCell>
-                                      <div className="flex items-center gap-3">
+                                      <div className="flex items-center gap-3" style={{ paddingLeft: `${depth * 18}px` }}>
+                                        {isFolder ? (
+                                          <button
+                                            type="button"
+                                            className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground hover:bg-accent"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              setCurrentPath(path);
+                                              if (!hasChildren) return;
+                                              setExpandedFolderIds((prev) => {
+                                                const next = new Set(prev);
+                                                if (next.has(node.id)) {
+                                                  next.delete(node.id);
+                                                } else {
+                                                  next.add(node.id);
+                                                }
+                                                return next;
+                                              });
+                                            }}
+                                          >
+                                            {hasChildren ? (
+                                              isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />
+                                            ) : (
+                                              <span className="h-3.5 w-3.5" />
+                                            )}
+                                          </button>
+                                        ) : (
+                                          <span className="h-5 w-5" />
+                                        )}
                                         <div
                                           className={cn(
                                             "rounded-xl p-2",
-                                            node.type === "目录" ? "bg-secondary text-chart-2" : "bg-muted text-muted-foreground",
+                                            isFolder ? "bg-sky-100 text-sky-700" : node.editable ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600",
                                           )}
                                         >
-                                          {node.type === "目录" ? <Folder className="h-4 w-4" /> : <File className="h-4 w-4" />}
+                                          {isFolder ? (
+                                            isExpanded ? <FolderOpen className="h-4 w-4" /> : <Folder className="h-4 w-4" />
+                                          ) : node.editable ? (
+                                            <FileCode2 className="h-4 w-4" />
+                                          ) : (
+                                            <FileText className="h-4 w-4" />
+                                          )}
                                         </div>
                                         <div>
                                           <div
                                             className={cn(
                                               "font-medium",
-                                              node.type === "目录" && "text-chart-2",
+                                              isFolder && "text-sky-700",
+                                              isActiveFolder && "underline decoration-border underline-offset-4",
                                             )}
                                           >
                                             {node.name}
                                           </div>
                                           <div className="text-xs text-muted-foreground/80">
-                                            {node.type === "目录" ? "目录" : node.editable ? "可在线编辑" : "文件"}
+                                            {isFolder ? "目录" : node.editable ? "可在线编辑" : "文件"}
                                           </div>
                                         </div>
                                       </div>
                                     </TableCell>
 
-                                    <TableCell className="text-sm text-muted-foreground">{node.size ?? "--"}</TableCell>
-                                    <TableCell className="text-sm text-muted-foreground">{node.modifiedAt}</TableCell>
+                                    <TableCell className="text-left text-sm text-muted-foreground">{node.size ?? "--"}</TableCell>
+                                    <TableCell className="text-left text-sm text-muted-foreground">{node.modifiedAt}</TableCell>
 
                                     <TableCell>
-                                      <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                                        {node.type === "目录" ? (
+                                      <div className="flex items-center justify-start gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                        {isFolder ? (
                                           <Button
                                             variant="ghost"
                                             size="icon"
                                             className="rounded-lg text-muted-foreground"
-                                            onClick={() => setCurrentPath((prev) => [...prev, node.name])}
+                                            onClick={() => {
+                                              setCurrentPath(path);
+                                              if (!hasChildren) return;
+                                              setExpandedFolderIds((prev) => {
+                                                const next = new Set(prev);
+                                                if (next.has(node.id)) {
+                                                  next.delete(node.id);
+                                                } else {
+                                                  next.add(node.id);
+                                                }
+                                                return next;
+                                              });
+                                            }}
                                           >
-                                            <ChevronRight className="h-4 w-4" />
+                                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                           </Button>
                                         ) : (
                                           <>
@@ -980,7 +1396,8 @@ export default function StorageManagerPrototype() {
                                       </div>
                                     </TableCell>
                                   </TableRow>
-                                ))
+                                );
+                                })
                               ) : (
                                 <TableRow>
                                   <TableCell colSpan={4} className="py-12 text-center text-sm text-muted-foreground">
@@ -1109,6 +1526,162 @@ export default function StorageManagerPrototype() {
               取消
             </Button>
             <Button className="rounded-xl bg-black text-white hover:bg-black/90">保存修改</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={createFolderDialogOpen}
+        onOpenChange={(open) => {
+          setCreateFolderDialogOpen(open);
+          if (!open) {
+            setCreateFolderError("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl rounded-3xl border-border">
+          <DialogHeader>
+            <DialogTitle className="text-xl">新建文件夹</DialogTitle>
+            <DialogDescription>
+              支持在当前存储卷的根目录或任意已有目录下创建新文件夹。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">文件夹名称</div>
+              <Input
+                value={newFolderName}
+                onChange={(event) => setNewFolderName(event.target.value)}
+                placeholder="请输入文件夹名称，例如 backup-2026"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">创建位置</div>
+              <Select value={newFolderPathKey} onValueChange={setNewFolderPathKey}>
+                <SelectTrigger className="h-10 rounded-xl border-border bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {folderOptions.map((option) => (
+                    <SelectItem key={option.key} value={option.key}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {createFolderError ? <div className="text-sm text-destructive">{createFolderError}</div> : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="rounded-xl border-border"
+              onClick={() => {
+                setCreateFolderDialogOpen(false);
+                setCreateFolderError("");
+              }}
+            >
+              取消
+            </Button>
+            <Button className="rounded-xl bg-black text-white hover:bg-black/90" onClick={handleCreateFolder}>
+              创建文件夹
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={uploadDialogOpen}
+        onOpenChange={(open) => {
+          setUploadDialogOpen(open);
+          if (!open) {
+            setUploadError("");
+            setUploadSelectedFile(null);
+            if (uploadInputRef.current) {
+              uploadInputRef.current.value = "";
+            }
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl rounded-3xl border-border">
+          <DialogHeader>
+            <DialogTitle className="text-xl">上传文件</DialogTitle>
+            <DialogDescription>
+              选择本地文件并指定上传路径，模拟上传到当前存储卷。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">选择文件</div>
+              <input
+                ref={uploadInputRef}
+                type="file"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setUploadSelectedFile(file);
+                  if (file) {
+                    setUploadError("");
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-muted/30 px-4 py-3 text-left transition-colors hover:bg-accent/40"
+                onClick={() => uploadInputRef.current?.click()}
+              >
+                <div className="flex items-center gap-2 text-sm text-foreground">
+                  <Upload className="h-4 w-4 text-muted-foreground" />
+                  <span>{uploadSelectedFile ? "已选择本地文件" : "点击选择本地文件"}</span>
+                </div>
+                <span className="text-xs text-muted-foreground">从本地文件管理器选择</span>
+              </button>
+              {uploadSelectedFile ? (
+                <div className="rounded-xl border border-border bg-accent/40 px-3 py-2 text-sm">
+                  <div className="font-medium text-foreground">{uploadSelectedFile.name}</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">{formatFileSize(uploadSelectedFile.size)}</div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">上传路径</div>
+              <Select value={uploadPathKey} onValueChange={setUploadPathKey}>
+                <SelectTrigger className="h-10 rounded-xl border-border bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {folderOptions.map((option) => (
+                    <SelectItem key={option.key} value={option.key}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {uploadError ? <div className="text-sm text-destructive">{uploadError}</div> : null}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="rounded-xl border-border"
+              onClick={() => {
+                setUploadDialogOpen(false);
+                setUploadError("");
+              }}
+            >
+              取消
+            </Button>
+            <Button className="rounded-xl bg-black text-white hover:bg-black/90" onClick={handleUploadFile}>
+              确认上传
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
