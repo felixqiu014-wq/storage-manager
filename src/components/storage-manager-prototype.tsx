@@ -1,0 +1,1095 @@
+"use client";
+
+import * as React from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Database,
+  Download,
+  Edit3,
+  File,
+  Folder,
+  HardDrive,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  Upload,
+} from "lucide-react";
+
+import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+
+type PvcStatus = "已挂载" | "创建中" | "异常" | "未使用";
+type AccessMode = "单节点读写" | "多节点只读";
+
+type PVC = {
+  id: string;
+  name: string;
+  namespace: string;
+  application: string;
+  status: PvcStatus;
+  capacityGi: number;
+  usedGi: number;
+  accessMode: AccessMode;
+  mountPath: string;
+  createdAt: string;
+};
+
+type FileNode = {
+  id: string;
+  name: string;
+  type: "目录" | "文件";
+  size?: string;
+  modifiedAt: string;
+  editable?: boolean;
+  content?: string;
+  children?: FileNode[];
+};
+
+const namespaces = ["全部命名空间", "default", "sealos-system", "user-db-proj"] as const;
+type NamespaceValue = (typeof namespaces)[number];
+type CreatableNamespace = Exclude<NamespaceValue, "全部命名空间">;
+const creatableNamespaces = namespaces.filter((namespace) => namespace !== "全部命名空间") as CreatableNamespace[];
+
+const initialPvcs: PVC[] = [
+  {
+    id: "pvc-1",
+    name: "mysql-data",
+    namespace: "user-db-proj",
+    application: "mysql-prod",
+    status: "已挂载",
+    capacityGi: 100,
+    usedGi: 88,
+    accessMode: "单节点读写",
+    mountPath: "/var/lib/mysql",
+    createdAt: "今天 09:12",
+  },
+  {
+    id: "pvc-2",
+    name: "postgres-backup",
+    namespace: "default",
+    application: "backup-worker",
+    status: "已挂载",
+    capacityGi: 20,
+    usedGi: 2,
+    accessMode: "单节点读写",
+    mountPath: "/data/backup",
+    createdAt: "昨天 18:40",
+  },
+  {
+    id: "pvc-3",
+    name: "registry-cache",
+    namespace: "sealos-system",
+    application: "image-registry",
+    status: "创建中",
+    capacityGi: 50,
+    usedGi: 0,
+    accessMode: "单节点读写",
+    mountPath: "/cache",
+    createdAt: "今天 10:03",
+  },
+  {
+    id: "pvc-4",
+    name: "redis-snapshot",
+    namespace: "user-db-proj",
+    application: "未关联应用",
+    status: "未使用",
+    capacityGi: 20,
+    usedGi: 0,
+    accessMode: "单节点读写",
+    mountPath: "/data",
+    createdAt: "3 天前",
+  },
+  {
+    id: "pvc-5",
+    name: "etl-warehouse",
+    namespace: "default",
+    application: "data-ops",
+    status: "异常",
+    capacityGi: 100,
+    usedGi: 98,
+    accessMode: "多节点只读",
+    mountPath: "/warehouse",
+    createdAt: "今天 07:28",
+  },
+];
+
+const filesByPvcId: Record<string, FileNode[]> = {
+  "pvc-1": [
+    {
+      id: "mysql-conf",
+      name: "my.cnf",
+      type: "文件",
+      size: "3 KB",
+      modifiedAt: "今天 09:40",
+      editable: true,
+      content: `[mysqld]
+character-set-server = utf8mb4
+collation-server = utf8mb4_general_ci
+max_connections = 600
+innodb_buffer_pool_size = 2G
+slow_query_log = 1
+slow_query_log_file = /var/lib/mysql/slow.log
+`,
+    },
+    {
+      id: "mysql-data-dir",
+      name: "data",
+      type: "目录",
+      modifiedAt: "今天 09:38",
+      children: [
+        {
+          id: "ibdata1",
+          name: "ibdata1",
+          type: "文件",
+          size: "12.4 GB",
+          modifiedAt: "今天 09:38",
+        },
+        {
+          id: "mysql-dir",
+          name: "mysql",
+          type: "目录",
+          modifiedAt: "今天 09:31",
+          children: [
+            {
+              id: "user-frm",
+              name: "user.frm",
+              type: "文件",
+              size: "16 KB",
+              modifiedAt: "今天 09:31",
+            },
+            {
+              id: "db-opt",
+              name: "db.opt",
+              type: "文件",
+              size: "1 KB",
+              modifiedAt: "昨天 23:18",
+              editable: true,
+              content: `default-character-set=utf8mb4
+default-collation=utf8mb4_general_ci
+`,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "mysql-log",
+      name: "error.log",
+      type: "文件",
+      size: "240 MB",
+      modifiedAt: "今天 09:41",
+      editable: true,
+      content: `2026-04-22T09:30:12 [Warning] 连接数接近上限
+2026-04-22T09:31:03 [Note] 完成 InnoDB 恢复
+2026-04-22T09:38:19 [Warning] 磁盘使用率已超过 85%
+`,
+    },
+    {
+      id: "mysql-tmp",
+      name: "tmp",
+      type: "目录",
+      modifiedAt: "今天 08:12",
+      children: [
+        {
+          id: "mysql-tmp-file",
+          name: "sort_buffer_01.tmp",
+          type: "文件",
+          size: "48 MB",
+          modifiedAt: "今天 08:12",
+        },
+      ],
+    },
+  ],
+  "pvc-2": [
+    {
+      id: "backup-dir",
+      name: "backup",
+      type: "目录",
+      modifiedAt: "昨天 18:40",
+      children: [
+        {
+          id: "dump-sql",
+          name: "dump-2026-04-21.sql.gz",
+          type: "文件",
+          size: "1.8 GB",
+          modifiedAt: "昨天 18:40",
+        },
+      ],
+    },
+  ],
+  "pvc-3": [
+    {
+      id: "init-note",
+      name: "初始化中.txt",
+      type: "文件",
+      size: "1 KB",
+      modifiedAt: "今天 10:03",
+      editable: true,
+      content: `当前卷正在创建中，请稍后刷新查看。`,
+    },
+  ],
+  "pvc-4": [
+    {
+      id: "empty-dir",
+      name: "空目录",
+      type: "目录",
+      modifiedAt: "3 天前",
+      children: [],
+    },
+  ],
+  "pvc-5": [
+    {
+      id: "etl-conf",
+      name: "warehouse.yaml",
+      type: "文件",
+      size: "5 KB",
+      modifiedAt: "今天 07:28",
+      editable: true,
+      content: `存储配置:
+  分区数: 48
+  压缩格式: parquet
+告警策略:
+  使用率阈值: 95
+  通知对象: 数据平台值班群
+`,
+    },
+    {
+      id: "crash-dir",
+      name: "crash",
+      type: "目录",
+      modifiedAt: "今天 07:10",
+      children: [
+        {
+          id: "crash-log",
+          name: "panic.log",
+          type: "文件",
+          size: "32 MB",
+          modifiedAt: "今天 07:10",
+          editable: true,
+          content: `磁盘写入失败，建议尽快扩容并清理临时文件。`,
+        },
+      ],
+    },
+  ],
+};
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function getUsagePercent(pvc: PVC) {
+  if (pvc.capacityGi === 0) return 0;
+  return Math.min(100, Math.round((pvc.usedGi / pvc.capacityGi) * 100));
+}
+
+function getProgressTone(percent: number) {
+  if (percent > 95) {
+    return "[&>div]:bg-destructive";
+  }
+  if (percent > 85) {
+    return "[&>div]:bg-chart-4";
+  }
+  return "[&>div]:bg-chart-2";
+}
+
+function sumCapacity(list: PVC[]) {
+  return list.reduce((total, pvc) => total + pvc.capacityGi, 0);
+}
+
+function sumUsed(list: PVC[]) {
+  return list.reduce((total, pvc) => total + pvc.usedGi, 0);
+}
+
+function sumWaste(list: PVC[]) {
+  return list
+    .filter((pvc) => pvc.status === "未使用")
+    .reduce((total, pvc) => total + pvc.capacityGi, 0);
+}
+
+function findNodeByPath(nodes: FileNode[], path: string[]): FileNode[] {
+  if (path.length === 0) return nodes;
+  let current = nodes;
+
+  for (const segment of path) {
+    const next = current.find((node) => node.type === "目录" && node.name === segment);
+    current = next?.children ?? [];
+  }
+
+  return current;
+}
+
+function getStatusDotColor(status: PvcStatus) {
+  switch (status) {
+    case "已挂载":
+      return "#10b981";
+    case "创建中":
+      return "#f59e0b";
+    case "异常":
+      return "#ef4444";
+    case "未使用":
+    default:
+      return "#94a3b8";
+  }
+}
+
+export default function StorageManagerPrototype() {
+  const [pvcsData, setPvcsData] = React.useState<PVC[]>(initialPvcs);
+  const [selectedNamespace, setSelectedNamespace] = React.useState<NamespaceValue>("全部命名空间");
+  const [selectedPvcId, setSelectedPvcId] = React.useState<string | null>(null);
+  const [currentPath, setCurrentPath] = React.useState<string[]>([]);
+  const [editorFile, setEditorFile] = React.useState<FileNode | null>(null);
+  const [editorContent, setEditorContent] = React.useState("");
+  const [expandingPvc, setExpandingPvc] = React.useState<PVC | null>(null);
+  const [nextCapacity, setNextCapacity] = React.useState<number[]>([160]);
+  const [dashboardPage, setDashboardPage] = React.useState(1);
+  const [instanceSearch, setInstanceSearch] = React.useState("");
+  const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
+  const [newPvcName, setNewPvcName] = React.useState("");
+  const [newNamespace, setNewNamespace] = React.useState<CreatableNamespace>("default");
+  const [newCapacityGi, setNewCapacityGi] = React.useState("20");
+  const [newAccessMode, setNewAccessMode] = React.useState<AccessMode>("单节点读写");
+  const [createError, setCreateError] = React.useState("");
+
+  const currentView = selectedPvcId ? "文件浏览器" : "全局大盘";
+  const pageSize = 3;
+
+  const filteredPvcs = React.useMemo(() => {
+    return selectedNamespace === "全部命名空间"
+      ? pvcsData
+      : pvcsData.filter((pvc) => pvc.namespace === selectedNamespace);
+  }, [selectedNamespace, pvcsData]);
+
+  const selectedPvc = React.useMemo(() => {
+    return pvcsData.find((pvc) => pvc.id === selectedPvcId) ?? null;
+  }, [selectedPvcId, pvcsData]);
+
+  const currentFiles = React.useMemo(() => {
+    if (!selectedPvc) return [];
+    const rootNodes = filesByPvcId[selectedPvc.id] ?? [];
+    return findNodeByPath(rootNodes, currentPath);
+  }, [selectedPvc, currentPath]);
+
+  const searchedPvcs = React.useMemo(() => {
+    const keyword = instanceSearch.trim().toLowerCase();
+    if (!keyword) return filteredPvcs;
+    return filteredPvcs.filter((pvc) => pvc.application.toLowerCase().includes(keyword));
+  }, [filteredPvcs, instanceSearch]);
+
+  const totalCapacity = sumCapacity(filteredPvcs);
+  const totalUsed = sumUsed(filteredPvcs);
+  const totalWaste = sumWaste(filteredPvcs);
+  const totalPages = Math.max(1, Math.ceil(searchedPvcs.length / pageSize));
+  const pagedPvcs = searchedPvcs.slice((dashboardPage - 1) * pageSize, dashboardPage * pageSize);
+
+  const estimatedMonthlyIncrease = React.useMemo(() => {
+    if (!expandingPvc) return 0;
+    const delta = Math.max(0, nextCapacity[0] - expandingPvc.capacityGi);
+    return delta * 4;
+  }, [expandingPvc, nextCapacity]);
+
+  const openBrowser = React.useCallback((pvc: PVC) => {
+    setSelectedPvcId(pvc.id);
+    setCurrentPath([]);
+  }, []);
+
+  const returnToDashboard = React.useCallback(() => {
+    setSelectedPvcId(null);
+    setCurrentPath([]);
+  }, []);
+
+  const openEditor = React.useCallback((file: FileNode) => {
+    setEditorFile(file);
+    setEditorContent(file.content ?? "");
+  }, []);
+
+  const openExpandDialog = React.useCallback((pvc: PVC) => {
+    setExpandingPvc(pvc);
+    setNextCapacity([Math.min(Math.max(pvc.capacityGi + 20, 40), 500)]);
+  }, []);
+
+  const openCreateDialog = React.useCallback(() => {
+    setCreateError("");
+    setCreateDialogOpen(true);
+  }, []);
+
+  const handleCreatePvc = React.useCallback(() => {
+    const normalizedName = newPvcName.trim();
+    const capacity = Number(newCapacityGi);
+
+    if (!normalizedName) {
+      setCreateError("请填写存储卷名称");
+      return;
+    }
+    if (!Number.isFinite(capacity) || capacity <= 0) {
+      setCreateError("容量需为大于 0 的数字");
+      return;
+    }
+
+    const duplicated = pvcsData.some(
+      (pvc) => pvc.namespace === newNamespace && pvc.name.toLowerCase() === normalizedName.toLowerCase(),
+    );
+    if (duplicated) {
+      setCreateError("同一命名空间下已存在同名存储卷");
+      return;
+    }
+
+    const nextPvc: PVC = {
+      id: `pvc-${Date.now()}`,
+      name: normalizedName,
+      namespace: newNamespace,
+      application: "未关联应用",
+      status: "未使用",
+      capacityGi: Math.round(capacity),
+      usedGi: 0,
+      accessMode: newAccessMode,
+      mountPath: `/data/${normalizedName}`,
+      createdAt: "刚刚",
+    };
+
+    setPvcsData((prev) => [nextPvc, ...prev]);
+    setCreateDialogOpen(false);
+    setNewPvcName("");
+    setNewNamespace("default");
+    setNewCapacityGi("20");
+    setNewAccessMode("单节点读写");
+    setCreateError("");
+  }, [newAccessMode, newCapacityGi, newNamespace, newPvcName, pvcsData]);
+
+  const browserPathLabel = selectedPvc ? [selectedPvc.mountPath, ...currentPath].join("/") : "";
+
+  React.useEffect(() => {
+    setDashboardPage(1);
+  }, [selectedNamespace, instanceSearch]);
+
+  React.useEffect(() => {
+    if (dashboardPage > totalPages) {
+      setDashboardPage(totalPages);
+    }
+  }, [dashboardPage, totalPages]);
+
+  return (
+    <div className="h-[100dvh] overflow-hidden bg-background p-0 text-foreground md:p-2">
+      <div className="h-full w-full">
+        <div className="relative flex h-full w-full flex-col rounded-none border border-border bg-card text-card-foreground shadow-none md:rounded-[20px] md:shadow-xl">
+          <div className="relative flex h-full min-h-0 flex-col px-4 py-4 md:px-12 md:py-6">
+            <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-border to-transparent md:inset-x-12" />
+            <div className="flex h-full min-h-0 flex-col">
+              <section
+                className={cn(
+                  "origin-top h-full min-h-0 transition-all duration-300",
+                  currentView === "全局大盘"
+                    ? "block translate-y-0 opacity-100"
+                    : "hidden -translate-y-2 opacity-0",
+                )}
+              >
+                <div className="flex h-full min-h-0 flex-col gap-4">
+                  <div className="flex flex-col gap-3 border-b border-border pb-4 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
+                        <HardDrive className="h-3.5 w-3.5" />
+                        存储资源全局视图
+                      </div>
+                      <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-foreground">存储管家</h1>
+                      <p className="mt-1 text-sm text-muted-foreground">统一查看各命名空间的存储卷状态、容量健康度与资源浪费情况。</p>
+                    </div>
+
+                    <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
+                      <div className="w-full md:w-60">
+                        <Select value={selectedNamespace} onValueChange={(value) => setSelectedNamespace(value as NamespaceValue)}>
+                          <SelectTrigger className="relative z-10 h-10 rounded-xl border-border bg-background shadow-sm">
+                            <SelectValue placeholder="选择命名空间" />
+                          </SelectTrigger>
+                          <SelectContent className="z-[90]">
+                            {namespaces.map((namespace) => (
+                              <SelectItem key={namespace} value={namespace}>
+                                {namespace}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button className="rounded-xl bg-black text-white hover:bg-black/90" onClick={openCreateDialog}>
+                        <Plus className="mr-1.5 h-4 w-4" />
+                        新建存储卷
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <Card className="rounded-2xl border-border shadow-sm">
+                      <CardHeader className="p-4 pb-2">
+                        <CardDescription>总分配容量</CardDescription>
+                        <CardTitle className="text-[28px]">{totalCapacity} Gi</CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-4 pt-0 text-sm text-muted-foreground">当前筛选范围内已分配的全部持久化容量。</CardContent>
+                    </Card>
+
+                    <Card className="rounded-2xl border-border shadow-sm">
+                      <CardHeader className="p-4 pb-2">
+                        <CardDescription>已使用容量</CardDescription>
+                        <CardTitle className="text-[28px]">{totalUsed} Gi</CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-4 pt-0 text-sm text-muted-foreground">依据存储卷使用率估算的实时已使用空间。</CardContent>
+                    </Card>
+
+                    <Card className="rounded-2xl border-border shadow-sm">
+                      <CardHeader className="p-4 pb-2">
+                        <CardDescription>闲置资源</CardDescription>
+                        <CardTitle className="text-[28px] text-chart-4">{totalWaste} Gi</CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-4 pt-0 text-sm text-muted-foreground">处于未使用状态、可能造成浪费的已分配容量。</CardContent>
+                    </Card>
+                  </div>
+
+                  <Card className="flex min-h-0 flex-1 flex-col rounded-2xl border-border bg-muted/30 shadow-sm">
+                    <CardHeader className="flex flex-col gap-3 p-4 pb-2">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                        <div>
+                          <CardTitle>存储卷列表</CardTitle>
+                          <CardDescription className="mt-3">按使用率、挂载状态和风险等级快速定位需要处理的存储卷。</CardDescription>
+                        </div>
+                        <div className="relative w-full md:w-[360px] md:shrink-0">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            value={instanceSearch}
+                            onChange={(event) => setInstanceSearch(event.target.value)}
+                            className="pl-9"
+                            placeholder="搜索挂载实例名称，如 mysql-prod"
+                          />
+                        </div>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="flex min-h-0 flex-1 flex-col p-4 pt-3">
+                      <div className="rounded-xl border border-border bg-card px-5 py-1 shadow-sm">
+                        <div className="grid min-h-9 grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] items-center gap-4 text-sm text-muted-foreground">
+                          <div>存储卷名称</div>
+                          <div>状态</div>
+                          <div>容量与使用率</div>
+                          <div>访问模式</div>
+                          <div className="text-right">操作</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-col gap-3">
+                        {pagedPvcs.length > 0 ? pagedPvcs.map((pvc) => {
+                          const usagePercent = getUsagePercent(pvc);
+                          const isExpandable = usagePercent > 85 || pvc.status === "异常";
+                          const canDelete = pvc.status !== "已挂载";
+
+                          return (
+                            <div
+                              key={pvc.id}
+                              className="grid grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] gap-4 rounded-xl border border-border bg-card px-5 py-4 shadow-sm transition-colors hover:bg-accent/40"
+                            >
+                              <div className="flex items-center gap-3 self-center">
+                                <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
+                                  <Database className="h-4 w-4" />
+                                </div>
+                                <div>
+                                  <div className="text-sm font-medium text-foreground">{pvc.name}</div>
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {pvc.application === "未关联应用" ? "当前未关联应用" : `已挂载至：${pvc.application}`}
+                                  </div>
+                                  <div className="mt-1 text-xs text-muted-foreground/80">{pvc.namespace}</div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center self-center">
+                                <div className="inline-flex items-center gap-2 text-sm text-foreground">
+                                  <span
+                                    className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                                    style={{ backgroundColor: getStatusDotColor(pvc.status) }}
+                                  />
+                                  <span>{pvc.status}</span>
+                                </div>
+                              </div>
+
+                              <div className="pr-5 self-center">
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between text-sm leading-none">
+                                    <span className="font-medium text-foreground">
+                                      {pvc.usedGi} Gi / {pvc.capacityGi} Gi
+                                    </span>
+                                    <span className={cn("text-[11px] font-medium", usagePercent > 95 ? "text-destructive" : usagePercent > 85 ? "text-chart-4" : "text-muted-foreground")}>
+                                      {usagePercent}%
+                                    </span>
+                                  </div>
+                                  <Progress value={usagePercent} className={cn("h-2 bg-muted", getProgressTone(usagePercent))} />
+                                </div>
+                              </div>
+
+                              <div className="self-center text-sm text-muted-foreground">{pvc.accessMode}</div>
+
+                              <div className="flex items-center justify-end gap-2 self-center">
+                                <Button
+                                  className="h-9 rounded-lg bg-black px-3 text-sm font-semibold text-white hover:bg-black/90"
+                                  onClick={() => openBrowser(pvc)}
+                                >
+                                  浏览文件
+                                </Button>
+
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-muted-foreground">
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-48">
+                                    <DropdownMenuItem
+                                      className={cn(isExpandable && "bg-accent text-accent-foreground")}
+                                      onClick={() => openExpandDialog(pvc)}
+                                    >
+                                      扩容
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      disabled={!canDelete}
+                                      className={cn(pvc.status === "未使用" && "text-destructive focus:bg-accent focus:text-destructive")}
+                                    >
+                                      删除
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </div>
+                          );
+                        }) : (
+                          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
+                            未找到与该实例名称匹配的存储卷
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-sm text-muted-foreground">
+                          {searchedPvcs.length > 0
+                            ? `显示第 ${(dashboardPage - 1) * pageSize + 1}-${Math.min(dashboardPage * pageSize, searchedPvcs.length)} 条，共 ${searchedPvcs.length} 条`
+                            : "当前无匹配结果"}
+                        </div>
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9 rounded-lg border-border"
+                            disabled={dashboardPage === 1}
+                            onClick={() => setDashboardPage((page) => Math.max(1, page - 1))}
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </Button>
+                          <div className="rounded-lg bg-secondary px-3 py-2 text-sm font-medium text-secondary-foreground">
+                            第 {dashboardPage} / {totalPages} 页
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9 rounded-lg border-border"
+                            disabled={dashboardPage === totalPages}
+                            onClick={() => setDashboardPage((page) => Math.min(totalPages, page + 1))}
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </section>
+
+              <section
+                className={cn(
+                  "origin-top h-full min-h-0 transition-all duration-300",
+                  currentView === "文件浏览器"
+                    ? "block translate-y-0 opacity-100"
+                    : "hidden translate-y-2 opacity-0",
+                )}
+              >
+                {selectedPvc && (
+                  <div className="flex h-full min-h-0 flex-col gap-6">
+                    <div className="flex flex-col gap-4 border-b border-border pb-6">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="flex items-center gap-3">
+                          <Button variant="ghost" className="rounded-xl px-3 text-muted-foreground" onClick={returnToDashboard}>
+                            <ChevronLeft className="mr-1 h-4 w-4" />
+                            返回大盘
+                          </Button>
+
+                          <div className="hidden h-5 w-px bg-border md:block" />
+
+                          <Breadcrumb>
+                            <BreadcrumbList>
+                              <BreadcrumbItem>
+                                <BreadcrumbPage>存储管家</BreadcrumbPage>
+                              </BreadcrumbItem>
+                              <BreadcrumbSeparator>
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </BreadcrumbSeparator>
+                              <BreadcrumbItem>
+                                <BreadcrumbPage>{selectedPvc.namespace}</BreadcrumbPage>
+                              </BreadcrumbItem>
+                              <BreadcrumbSeparator>
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </BreadcrumbSeparator>
+                              <BreadcrumbItem>
+                                <BreadcrumbPage>{selectedPvc.name}</BreadcrumbPage>
+                              </BreadcrumbItem>
+                              <BreadcrumbSeparator>
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </BreadcrumbSeparator>
+                              <BreadcrumbItem>
+                                <BreadcrumbPage>{selectedPvc.mountPath}</BreadcrumbPage>
+                              </BreadcrumbItem>
+                            </BreadcrumbList>
+                          </Breadcrumb>
+                        </div>
+
+                        <div className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs text-muted-foreground">
+                          <HardDrive className="h-3.5 w-3.5 text-chart-2" />
+                          当前路径：{browserPathLabel}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <Button
+                        variant="outline"
+                        className="w-full rounded-xl border-border md:w-auto"
+                        onClick={() => setCurrentPath((prev) => prev.slice(0, -1))}
+                        disabled={currentPath.length === 0}
+                      >
+                        <ChevronLeft className="mr-1 h-4 w-4" />
+                        返回上一级
+                      </Button>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button className="rounded-xl bg-black text-white hover:bg-black/90">
+                          <Upload className="mr-1.5 h-4 w-4" />
+                          上传文件
+                        </Button>
+                        <Button variant="outline" className="rounded-xl border-border">
+                          <Plus className="mr-1.5 h-4 w-4" />
+                          新建文件夹
+                        </Button>
+                        <Button variant="outline" size="icon" className="rounded-xl border-border">
+                          <RefreshCw className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <Card className="flex min-h-0 flex-1 flex-col rounded-2xl border-border shadow-sm">
+                      <CardHeader>
+                        <CardTitle>文件列表</CardTitle>
+                        <CardDescription>支持浏览目录、下载文件、在线编辑配置，并快速识别高风险日志文件。</CardDescription>
+                      </CardHeader>
+                      <CardContent className="flex min-h-0 flex-1 flex-col">
+                        <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border">
+                          <Table>
+                            <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
+                              <TableRow>
+                                <TableHead className="w-[320px]">名称</TableHead>
+                                <TableHead>大小</TableHead>
+                                <TableHead>最后修改时间</TableHead>
+                                <TableHead className="text-right">操作</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {currentFiles.length > 0 ? (
+                                currentFiles.map((node) => (
+                                  <TableRow
+                                    key={node.id}
+                                    className="group cursor-pointer transition-colors hover:bg-accent/40"
+                                    onDoubleClick={() => {
+                                      if (node.type === "目录") {
+                                        setCurrentPath((prev) => [...prev, node.name]);
+                                      }
+                                    }}
+                                  >
+                                    <TableCell>
+                                      <div className="flex items-center gap-3">
+                                        <div
+                                          className={cn(
+                                            "rounded-xl p-2",
+                                            node.type === "目录" ? "bg-secondary text-chart-2" : "bg-muted text-muted-foreground",
+                                          )}
+                                        >
+                                          {node.type === "目录" ? <Folder className="h-4 w-4" /> : <File className="h-4 w-4" />}
+                                        </div>
+                                        <div>
+                                          <div
+                                            className={cn(
+                                              "font-medium",
+                                              node.type === "目录" && "text-chart-2",
+                                            )}
+                                          >
+                                            {node.name}
+                                          </div>
+                                          <div className="text-xs text-muted-foreground/80">
+                                            {node.type === "目录" ? "目录" : node.editable ? "可在线编辑" : "文件"}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </TableCell>
+
+                                    <TableCell className="text-sm text-muted-foreground">{node.size ?? "--"}</TableCell>
+                                    <TableCell className="text-sm text-muted-foreground">{node.modifiedAt}</TableCell>
+
+                                    <TableCell>
+                                      <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                        {node.type === "目录" ? (
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="rounded-lg text-muted-foreground"
+                                            onClick={() => setCurrentPath((prev) => [...prev, node.name])}
+                                          >
+                                            <ChevronRight className="h-4 w-4" />
+                                          </Button>
+                                        ) : (
+                                          <>
+                                            <Button variant="ghost" size="icon" className="rounded-lg text-muted-foreground">
+                                              <Download className="h-4 w-4" />
+                                            </Button>
+                                            {node.editable && (
+                                              <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="rounded-lg text-muted-foreground hover:text-chart-2"
+                                                onClick={() => openEditor(node)}
+                                              >
+                                                <Edit3 className="h-4 w-4" />
+                                              </Button>
+                                            )}
+                                            <Button variant="ghost" size="icon" className="rounded-lg text-destructive hover:bg-accent hover:text-destructive">
+                                              <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                ))
+                              ) : (
+                                <TableRow>
+                                  <TableCell colSpan={4} className="py-12 text-center text-sm text-muted-foreground">
+                                    当前目录为空
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          setCreateDialogOpen(open);
+          if (!open) {
+            setCreateError("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl rounded-3xl border-border">
+          <DialogHeader>
+            <DialogTitle className="text-xl">新建存储卷</DialogTitle>
+            <DialogDescription>创建后暂不分配到特定实例，可在后续流程中再进行挂载。</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">存储卷名称</div>
+              <Input
+                value={newPvcName}
+                onChange={(event) => setNewPvcName(event.target.value)}
+                placeholder="请输入名称，例如 mysql-cache"
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-foreground">命名空间</div>
+                <Select value={newNamespace} onValueChange={(value) => setNewNamespace(value as CreatableNamespace)}>
+                  <SelectTrigger className="h-10 rounded-xl border-border bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {creatableNamespaces.map((namespace) => (
+                      <SelectItem key={namespace} value={namespace}>
+                        {namespace}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-foreground">容量 (Gi)</div>
+                <Input
+                  type="number"
+                  min={1}
+                  value={newCapacityGi}
+                  onChange={(event) => setNewCapacityGi(event.target.value)}
+                  placeholder="请输入容量"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">访问模式</div>
+              <Select value={newAccessMode} onValueChange={(value) => setNewAccessMode(value as AccessMode)}>
+                <SelectTrigger className="h-10 rounded-xl border-border bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="单节点读写">单节点读写</SelectItem>
+                  <SelectItem value="多节点只读">多节点只读</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {createError ? <div className="text-sm text-destructive">{createError}</div> : null}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl border-border" onClick={() => setCreateDialogOpen(false)}>
+              取消
+            </Button>
+            <Button className="rounded-xl bg-black text-white hover:bg-black/90" onClick={handleCreatePvc}>
+              创建存储卷
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(editorFile)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditorFile(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl rounded-3xl border-border p-0">
+          <DialogHeader className="border-b border-border px-6 py-5">
+            <DialogTitle className="text-xl">{editorFile?.name}</DialogTitle>
+            <DialogDescription>在线修改配置文件内容，保存后将同步到当前存储卷。</DialogDescription>
+          </DialogHeader>
+
+          <div className="px-6 py-5">
+            <Textarea
+              value={editorContent}
+              onChange={(event) => setEditorContent(event.target.value)}
+              className="min-h-[420px] rounded-2xl border-input bg-foreground font-mono text-sm text-background shadow-inner focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none"
+            />
+          </div>
+
+          <DialogFooter className="border-t border-border px-6 py-4">
+            <Button variant="outline" className="rounded-xl border-border" onClick={() => setEditorFile(null)}>
+              取消
+            </Button>
+            <Button className="rounded-xl bg-black text-white hover:bg-black/90">保存修改</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(expandingPvc)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setExpandingPvc(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl rounded-3xl border-border">
+          <DialogHeader>
+            <DialogTitle className="text-xl">扩容存储卷</DialogTitle>
+            <DialogDescription>
+              为 {expandingPvc?.name} 调整容量上限，缓解空间不足带来的服务风险。
+            </DialogDescription>
+          </DialogHeader>
+
+          {expandingPvc && (
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-border bg-accent p-4 text-sm text-accent-foreground">
+                当前使用率为 {getUsagePercent(expandingPvc)}%，建议在业务高峰前预留更多空间，避免写入失败或备份中断。
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-end justify-between">
+                  <div>
+                    <div className="text-sm text-muted-foreground">目标容量</div>
+                    <div className="text-3xl font-semibold text-foreground">{nextCapacity[0]} Gi</div>
+                  </div>
+                  <div className="text-right text-sm text-muted-foreground">
+                    当前容量
+                    <div className="mt-1 font-medium text-foreground">{expandingPvc.capacityGi} Gi</div>
+                  </div>
+                </div>
+
+                <Slider
+                  value={nextCapacity}
+                  onValueChange={setNextCapacity}
+                  min={expandingPvc.capacityGi}
+                  max={500}
+                  step={10}
+                />
+
+                <div className="flex items-center justify-between rounded-2xl bg-secondary px-4 py-3">
+                  <span className="text-sm text-muted-foreground">预计每月费用将增加</span>
+                  <span className="text-xl font-semibold text-foreground">¥{estimatedMonthlyIncrease} 元</span>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" className="rounded-xl border-border" onClick={() => setExpandingPvc(null)}>
+                  取消
+                </Button>
+                <Button className="rounded-xl">确认扩容</Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
