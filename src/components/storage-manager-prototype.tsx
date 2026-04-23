@@ -1020,11 +1020,11 @@ export default function StorageManagerPrototype() {
   const isRecycleSectionActive = currentView === "回收站";
 
   return (
-    <div className="h-[100dvh] overflow-hidden bg-background p-0 text-foreground md:p-2">
+    <div className="h-[100dvh] overflow-auto bg-background p-0 text-foreground md:p-2">
       <div className="h-full w-full">
         <div className="relative flex h-full w-full rounded-none border border-border bg-card text-card-foreground shadow-none md:rounded-lg md:shadow-sm">
           <div className="pointer-events-none absolute inset-x-0 top-14 z-10 h-px bg-border" />
-          <aside className="hidden h-full w-[272px] shrink-0 flex-col border-r border-border bg-zinc-50/80 md:flex">
+          <aside className="hidden h-full w-[236px] shrink-0 flex-col border-r border-border bg-zinc-50/80 xl:w-[272px] md:flex">
             <div className="flex h-14 items-center justify-between px-6">
               <div className="flex items-center gap-2">
                 <Package2 className="h-4 w-4 text-foreground" />
@@ -1156,7 +1156,7 @@ export default function StorageManagerPrototype() {
                     </Card>
                   </div>
 
-                  <Card className="flex min-h-0 flex-1 flex-col rounded-2xl border-border bg-muted/30 shadow-sm">
+                  <Card className="flex min-h-0 flex-col rounded-2xl border-border bg-muted/30 shadow-sm">
                     <CardHeader className="flex flex-col gap-4 px-5 pb-3 pt-5 md:px-6 md:pt-6">
                       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                         <div>
@@ -1175,123 +1175,127 @@ export default function StorageManagerPrototype() {
                       </div>
                     </CardHeader>
 
-                    <CardContent className={cn("flex min-h-0 flex-1 flex-col md:px-6", isCompactScreen ? "px-4 pb-4 pt-3 md:pb-4" : "px-5 pb-5 pt-4 md:pb-6")}>
-                      <div className="rounded-xl border border-border bg-card px-5 py-2 shadow-sm md:px-6">
-                        <div className="grid min-h-10 grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] items-center gap-4 text-sm font-semibold text-muted-foreground">
-                          <div>存储卷名称</div>
-                          <div>状态</div>
-                          <div>容量与使用率</div>
-                          <div>访问模式</div>
-                          <div className="text-left">操作</div>
-                        </div>
-                      </div>
-
-                      <div className={cn(isCompactScreen ? "mt-3 flex flex-col gap-3" : "mt-4 flex flex-col gap-4")}>
-                        {pagedPvcs.length > 0 ? pagedPvcs.map((pvc) => {
-                          const usagePercent = getUsagePercent(pvc);
-                          const isExpandable = usagePercent > 85 || pvc.status === "异常";
-                          const canDelete = pvc.status !== "已挂载";
-
-                          return (
-                            <div
-                              key={pvc.id}
-                              className={cn(
-                                "grid grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] gap-4 rounded-xl border border-border bg-card px-5 shadow-sm transition-colors hover:bg-accent/40 md:px-6",
-                                isCompactScreen ? "py-3.5" : "py-4",
-                              )}
-                            >
-                              <div className="flex items-center gap-3 self-center">
-                                <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
-                                  <Database className="h-4 w-4" />
-                                </div>
-                                <div>
-                                  <div className="text-sm font-medium text-foreground">{pvc.name}</div>
-                                  <div className="mt-1 text-xs text-muted-foreground">
-                                    {pvc.application === "未关联应用" ? "当前未关联应用" : `已挂载至：${pvc.application}`}
-                                  </div>
-                                  <div className="mt-1 text-xs text-muted-foreground/80">{pvc.namespace}</div>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center self-center">
-                                <div className="inline-flex items-center gap-2 text-sm text-foreground">
-                                  <span
-                                    className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                                    style={{ backgroundColor: getStatusDotColor(pvc.status) }}
-                                  />
-                                  <span>{pvc.status}</span>
-                                </div>
-                              </div>
-
-                              <div className="pr-5 self-center">
-                                <div className="space-y-2">
-                                  <div className="flex items-center justify-between text-sm leading-none">
-                                    <span className="font-medium text-foreground">
-                                      {pvc.usedGi} Gi / {pvc.capacityGi} Gi
-                                    </span>
-                                    <span className={cn("text-[11px] font-medium", usagePercent > 95 ? "text-destructive" : usagePercent > 85 ? "text-chart-4" : "text-muted-foreground")}>
-                                      {usagePercent}%
-                                    </span>
-                                  </div>
-                                  <Progress value={usagePercent} className={cn("h-2 bg-muted", getProgressTone(usagePercent))} />
-                                </div>
-                              </div>
-
-                              <div className="self-center text-sm text-foreground">{pvc.accessMode}</div>
-
-                              <div className="flex items-center justify-start gap-2 self-center">
-                                <Button
-                                  className="h-9 rounded-lg bg-black px-3 text-sm font-semibold text-white hover:bg-black/90"
-                                  onClick={() => openBrowser(pvc)}
-                                >
-                                  浏览文件
-                                </Button>
-
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-muted-foreground">
-                                      <MoreHorizontal className="h-4 w-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-44 rounded-xl p-2 shadow-lg">
-                                    <DropdownMenuItem
-                                      className={cn(
-                                        "h-9 rounded-md px-2 text-sm",
-                                        isExpandable && "text-chart-4",
-                                      )}
-                                      onClick={() => openExpandDialog(pvc)}
-                                    >
-                                      <ArrowBigUpDash className="mr-2 h-4 w-4 text-muted-foreground" />
-                                      <span>扩容</span>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      disabled={!canDelete}
-                                      className="h-9 rounded-md px-2 text-sm text-destructive focus:bg-accent focus:text-destructive data-[disabled]:text-destructive/50"
-                                      onClick={() => {
-                                        if (canDelete) {
-                                          openDeleteDialog(pvc);
-                                        }
-                                      }}
-                                    >
-                                      <Trash2
-                                        className={cn(
-                                          "mr-2 h-4 w-4",
-                                          canDelete ? "text-destructive" : "text-destructive/50",
-                                        )}
-                                      />
-                                      <span>删除</span>
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
+                    <CardContent className={cn("flex min-h-0 flex-col md:px-6", isCompactScreen ? "px-4 pb-4 pt-3 md:pb-4" : "px-5 pb-5 pt-4 md:pb-6")}>
+                      <div className="overflow-x-auto pb-1">
+                        <div className={cn("min-w-[980px]", isCompactScreen && "min-w-[860px]")}>
+                          <div className="rounded-xl border border-border bg-card px-5 py-2 shadow-sm md:px-6">
+                            <div className="grid min-h-10 grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] items-center gap-4 text-sm font-semibold text-muted-foreground">
+                              <div>存储卷名称</div>
+                              <div>状态</div>
+                              <div>容量与使用率</div>
+                              <div>访问模式</div>
+                              <div className="text-left">操作</div>
                             </div>
-                          );
-                        }) : (
-                          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground md:px-6">
-                            未找到与关键词匹配的存储卷
                           </div>
-                        )}
+
+                          <div className={cn(isCompactScreen ? "mt-3 flex flex-col gap-3" : "mt-4 flex flex-col gap-4")}>
+                            {pagedPvcs.length > 0 ? pagedPvcs.map((pvc) => {
+                              const usagePercent = getUsagePercent(pvc);
+                              const isExpandable = usagePercent > 85 || pvc.status === "异常";
+                              const canDelete = pvc.status !== "已挂载";
+
+                              return (
+                                <div
+                                  key={pvc.id}
+                                  className={cn(
+                                    "grid grid-cols-[2.2fr_1fr_2fr_1.2fr_1.5fr] gap-4 rounded-xl border border-border bg-card px-5 shadow-sm transition-colors hover:bg-accent/40 md:px-6",
+                                    isCompactScreen ? "py-3.5" : "py-4",
+                                  )}
+                                >
+                                  <div className="flex items-center gap-3 self-center">
+                                    <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
+                                      <Database className="h-4 w-4" />
+                                    </div>
+                                    <div>
+                                      <div className="text-sm font-medium text-foreground">{pvc.name}</div>
+                                      <div className="mt-1 text-xs text-muted-foreground">
+                                        {pvc.application === "未关联应用" ? "当前未关联应用" : `已挂载至：${pvc.application}`}
+                                      </div>
+                                      <div className="mt-1 text-xs text-muted-foreground/80">{pvc.namespace}</div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center self-center">
+                                    <div className="inline-flex items-center gap-2 text-sm text-foreground">
+                                      <span
+                                        className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                                        style={{ backgroundColor: getStatusDotColor(pvc.status) }}
+                                      />
+                                      <span>{pvc.status}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="pr-5 self-center">
+                                    <div className="space-y-2">
+                                      <div className="flex items-center justify-between text-sm leading-none">
+                                        <span className="font-medium text-foreground">
+                                          {pvc.usedGi} Gi / {pvc.capacityGi} Gi
+                                        </span>
+                                        <span className={cn("text-[11px] font-medium", usagePercent > 95 ? "text-destructive" : usagePercent > 85 ? "text-chart-4" : "text-muted-foreground")}>
+                                          {usagePercent}%
+                                        </span>
+                                      </div>
+                                      <Progress value={usagePercent} className={cn("h-2 bg-muted", getProgressTone(usagePercent))} />
+                                    </div>
+                                  </div>
+
+                                  <div className="self-center text-sm text-foreground">{pvc.accessMode}</div>
+
+                                  <div className="flex items-center justify-start gap-2 self-center">
+                                    <Button
+                                      className="h-9 rounded-lg bg-black px-3 text-sm font-semibold text-white hover:bg-black/90"
+                                      onClick={() => openBrowser(pvc)}
+                                    >
+                                      浏览文件
+                                    </Button>
+
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-muted-foreground">
+                                          <MoreHorizontal className="h-4 w-4" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end" className="w-44 rounded-xl p-2 shadow-lg">
+                                        <DropdownMenuItem
+                                          className={cn(
+                                            "h-9 rounded-md px-2 text-sm",
+                                            isExpandable && "text-chart-4",
+                                          )}
+                                          onClick={() => openExpandDialog(pvc)}
+                                        >
+                                          <ArrowBigUpDash className="mr-2 h-4 w-4 text-muted-foreground" />
+                                          <span>扩容</span>
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          disabled={!canDelete}
+                                          className="h-9 rounded-md px-2 text-sm text-destructive focus:bg-accent focus:text-destructive data-[disabled]:text-destructive/50"
+                                          onClick={() => {
+                                            if (canDelete) {
+                                              openDeleteDialog(pvc);
+                                            }
+                                          }}
+                                        >
+                                          <Trash2
+                                            className={cn(
+                                              "mr-2 h-4 w-4",
+                                              canDelete ? "text-destructive" : "text-destructive/50",
+                                            )}
+                                          />
+                                          <span>删除</span>
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                </div>
+                              );
+                            }) : (
+                              <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground md:px-6">
+                                未找到与关键词匹配的存储卷
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
                       <div className={cn("flex flex-col gap-3 border-t border-border sm:flex-row sm:items-center sm:justify-between", isCompactScreen ? "mt-3 pt-3" : "mt-4 pt-4")}>
@@ -1362,7 +1366,7 @@ export default function StorageManagerPrototype() {
                       </div>
                     </div>
 
-                    <Card className="flex min-h-0 flex-1 flex-col rounded-2xl border-border shadow-sm">
+                    <Card className="flex min-h-0 flex-col rounded-2xl border-border shadow-sm">
                       <CardHeader>
                         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                           <CardTitle>文件列表</CardTitle>
@@ -1379,7 +1383,7 @@ export default function StorageManagerPrototype() {
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent className="flex min-h-0 flex-1 flex-col">
+                      <CardContent className="flex min-h-0 flex-col">
                         <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border">
                           <Table>
                             <TableHeader className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
@@ -1640,8 +1644,8 @@ export default function StorageManagerPrototype() {
                     </div>
                   </div>
 
-                  <Card className="flex min-h-0 flex-1 flex-col rounded-2xl border-border bg-muted/30 shadow-sm">
-                    <CardContent className={cn("flex min-h-0 flex-1 flex-col md:px-6", isCompactScreen ? "px-4 pb-4 pt-4 md:pb-4" : "px-5 pb-5 pt-5 md:pb-6")}>
+                  <Card className="flex min-h-0 flex-col rounded-2xl border-border bg-muted/30 shadow-sm">
+                    <CardContent className={cn("flex min-h-0 flex-col md:px-6", isCompactScreen ? "px-4 pb-4 pt-4 md:pb-4" : "px-5 pb-5 pt-5 md:pb-6")}>
                       <div className="rounded-xl border border-border bg-card px-5 py-2 shadow-sm md:px-6">
                         <div className="grid min-h-10 grid-cols-[1.5fr_1.9fr_0.9fr_1.7fr_1.3fr_0.9fr] items-center gap-4 text-sm font-semibold text-muted-foreground">
                           <div>名称</div>
@@ -1653,33 +1657,37 @@ export default function StorageManagerPrototype() {
                         </div>
                       </div>
 
-                      <div className={cn(isCompactScreen ? "mt-3 flex flex-col gap-3" : "mt-4 flex flex-col gap-4")}>
-                        {recycleItems.length > 0 ? (
-                          recycleItems.map((item) => (
-                            <div
-                              key={item.id}
-                              className={cn(
-                                "grid grid-cols-[1.5fr_1.9fr_0.9fr_1.7fr_1.3fr_0.9fr] gap-4 rounded-xl border border-border bg-card px-5 shadow-sm transition-colors hover:bg-accent/40 md:px-6",
-                                isCompactScreen ? "py-3.5" : "py-4",
-                              )}
-                            >
-                              <div className="self-center text-sm font-medium text-foreground">{item.name}</div>
-                              <div className="self-center text-sm text-muted-foreground">{item.originalPath}</div>
-                              <div className="self-center text-sm text-foreground">{item.size}</div>
-                              <div className="self-center text-sm text-foreground">{item.deletedAt}</div>
-                              <div className="self-center text-sm text-foreground">{item.remainingDays} 天</div>
-                              <div className="flex items-center justify-start">
-                                <Button variant="outline" className="h-9 rounded-lg border-border px-4" onClick={() => setRestoringRecycleItem(item)}>
-                                  恢复
-                                </Button>
+                      <div className="overflow-x-auto pb-1">
+                        <div className={cn("min-w-[980px]", isCompactScreen && "min-w-[860px]")}>
+                          <div className={cn(isCompactScreen ? "mt-3 flex flex-col gap-3" : "mt-4 flex flex-col gap-4")}>
+                            {recycleItems.length > 0 ? (
+                              recycleItems.map((item) => (
+                                <div
+                                  key={item.id}
+                                  className={cn(
+                                    "grid grid-cols-[1.5fr_1.9fr_0.9fr_1.7fr_1.3fr_0.9fr] gap-4 rounded-xl border border-border bg-card px-5 shadow-sm transition-colors hover:bg-accent/40 md:px-6",
+                                    isCompactScreen ? "py-3.5" : "py-4",
+                                  )}
+                                >
+                                  <div className="self-center text-sm font-medium text-foreground">{item.name}</div>
+                                  <div className="self-center text-sm text-muted-foreground">{item.originalPath}</div>
+                                  <div className="self-center text-sm text-foreground">{item.size}</div>
+                                  <div className="self-center text-sm text-foreground">{item.deletedAt}</div>
+                                  <div className="self-center text-sm text-foreground">{item.remainingDays} 天</div>
+                                  <div className="flex items-center justify-start">
+                                    <Button variant="outline" className="h-9 rounded-lg border-border px-4" onClick={() => setRestoringRecycleItem(item)}>
+                                      恢复
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground md:px-6">
+                                回收站为空
                               </div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground md:px-6">
-                            回收站为空
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
