@@ -15,6 +15,7 @@ import {
   Folder,
   FolderOpen,
   MoreHorizontal,
+  Package2,
   Plus,
   Search,
   Trash2,
@@ -91,9 +92,22 @@ type FolderOption = {
   path: string[];
 };
 
+type RecycleItem = {
+  id: string;
+  name: string;
+  originalPath: string;
+  size: string;
+  deletedAt: string;
+  remainingDays: number;
+};
+
 type FileSortField = "名称" | "大小" | "修改时间";
 type NameSortMode = "首字母" | "类型";
 type SortDirection = "asc" | "desc";
+type PendingDeleteFile = {
+  node: FileNode;
+  path: string[];
+};
 
 const namespaces = ["全部命名空间", "default", "sealos-system", "user-db-proj"] as const;
 type NamespaceValue = (typeof namespaces)[number];
@@ -160,6 +174,33 @@ const initialPvcs: PVC[] = [
     accessMode: "多节点只读",
     mountPath: "/warehouse",
     createdAt: "今天 07:28",
+  },
+];
+
+const initialRecycleItems: RecycleItem[] = [
+  {
+    id: "recycle-1",
+    name: "old-backup.sql",
+    originalPath: "/mysql-data/backups",
+    size: "3.2 Gi",
+    deletedAt: "2026-05-19 12:00",
+    remainingDays: 6,
+  },
+  {
+    id: "recycle-2",
+    name: "temp.log",
+    originalPath: "/mysql-data/logs",
+    size: "120 MB",
+    deletedAt: "2026-05-19 11:30",
+    remainingDays: 6,
+  },
+  {
+    id: "recycle-3",
+    name: "cache.dat",
+    originalPath: "/registry-cache/tmp",
+    size: "52 MB",
+    deletedAt: "2026-05-18 18:22",
+    remainingDays: 5,
   },
 ];
 
@@ -425,6 +466,24 @@ function addFileToPath(nodes: FileNode[], targetPath: string[], file: FileNode):
   });
 }
 
+function removeNodeById(nodes: FileNode[], targetId: string): FileNode[] {
+  const nextNodes: FileNode[] = [];
+  for (const node of nodes) {
+    if (node.id === targetId) {
+      continue;
+    }
+    if (node.type === "目录" && node.children) {
+      nextNodes.push({
+        ...node,
+        children: removeNodeById(node.children, targetId),
+      });
+      continue;
+    }
+    nextNodes.push(node);
+  }
+  return nextNodes;
+}
+
 function getFolderIdsByPath(nodes: FileNode[], path: string[]): string[] {
   if (path.length === 0) return [];
   const ids: string[] = [];
@@ -513,7 +572,9 @@ function getFileTypeRank(node: FileNode): number {
 
 export default function StorageManagerPrototype() {
   const [pvcsData, setPvcsData] = React.useState<PVC[]>(initialPvcs);
+  const [recycleItems, setRecycleItems] = React.useState<RecycleItem[]>(initialRecycleItems);
   const [filesByPvcId, setFilesByPvcId] = React.useState<Record<string, FileNode[]>>(initialFilesByPvcId);
+  const [currentView, setCurrentView] = React.useState<"存储卷" | "文件管理" | "回收站">("存储卷");
   const [selectedNamespace, setSelectedNamespace] = React.useState<NamespaceValue>("全部命名空间");
   const [selectedPvcId, setSelectedPvcId] = React.useState<string | null>(null);
   const [currentPath, setCurrentPath] = React.useState<string[]>([]);
@@ -542,13 +603,14 @@ export default function StorageManagerPrototype() {
   const [uploadPathKey, setUploadPathKey] = React.useState("__root__");
   const [uploadError, setUploadError] = React.useState("");
   const [highlightNodeId, setHighlightNodeId] = React.useState<string | null>(null);
+  const [clearRecycleDialogOpen, setClearRecycleDialogOpen] = React.useState(false);
+  const [restoringRecycleItem, setRestoringRecycleItem] = React.useState<RecycleItem | null>(null);
+  const [pendingDeleteFile, setPendingDeleteFile] = React.useState<PendingDeleteFile | null>(null);
   const [fileSortField, setFileSortField] = React.useState<FileSortField>("修改时间");
   const [fileSortDirection, setFileSortDirection] = React.useState<SortDirection>("desc");
   const [nameSortMode, setNameSortMode] = React.useState<NameSortMode>("首字母");
   const [viewport, setViewport] = React.useState({ width: 0, height: 0 });
   const uploadInputRef = React.useRef<HTMLInputElement | null>(null);
-
-  const currentView = selectedPvcId ? "文件浏览器" : "全局大盘";
   const isCompactScreen = viewport.width > 0 && (viewport.width < 1360 || viewport.height < 900);
   const isVeryCompactHeight = viewport.height > 0 && viewport.height < 780;
   const pageSize = isVeryCompactHeight ? 2 : 3;
@@ -638,12 +700,21 @@ export default function StorageManagerPrototype() {
   }, [expandingPvc, nextCapacity]);
 
   const openBrowser = React.useCallback((pvc: PVC) => {
+    setCurrentView("文件管理");
     setSelectedPvcId(pvc.id);
     setCurrentPath([]);
     setExpandedFolderIds(new Set());
   }, []);
 
   const returnToDashboard = React.useCallback(() => {
+    setCurrentView("存储卷");
+    setSelectedPvcId(null);
+    setCurrentPath([]);
+    setExpandedFolderIds(new Set());
+  }, []);
+
+  const openRecycleView = React.useCallback(() => {
+    setCurrentView("回收站");
     setSelectedPvcId(null);
     setCurrentPath([]);
     setExpandedFolderIds(new Set());
@@ -888,6 +959,52 @@ export default function StorageManagerPrototype() {
     setFileSortDirection(field === "修改时间" ? "desc" : "asc");
   }, [fileSortField]);
 
+  const restoreRecycleItem = React.useCallback((id: string) => {
+    setRecycleItems((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const handleConfirmRestoreRecycleItem = React.useCallback(() => {
+    if (!restoringRecycleItem) return;
+    restoreRecycleItem(restoringRecycleItem.id);
+    setRestoringRecycleItem(null);
+  }, [restoreRecycleItem, restoringRecycleItem]);
+
+  const handleConfirmDeleteFile = React.useCallback(() => {
+    if (!selectedPvc || !pendingDeleteFile) return;
+
+    setFilesByPvcId((prev) => {
+      const pvcFiles = prev[selectedPvc.id] ?? [];
+      return {
+        ...prev,
+        [selectedPvc.id]: removeNodeById(pvcFiles, pendingDeleteFile.node.id),
+      };
+    });
+
+    const parentPath = pendingDeleteFile.path.slice(0, -1);
+    const originalPath = `/${[selectedPvc.name, ...parentPath].join("/")}`;
+    const now = new Date();
+    const deletedAt = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+    setRecycleItems((prev) => [
+      {
+        id: `recycle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: pendingDeleteFile.node.name,
+        originalPath,
+        size: pendingDeleteFile.node.size ?? "--",
+        deletedAt,
+        remainingDays: 7,
+      },
+      ...prev,
+    ]);
+
+    if (editorFile?.id === pendingDeleteFile.node.id) {
+      setEditorFile(null);
+      setEditorContent("");
+    }
+
+    setPendingDeleteFile(null);
+  }, [editorFile?.id, pendingDeleteFile, selectedPvc]);
+
   React.useEffect(() => {
     setDashboardPage(1);
   }, [selectedNamespace, instanceSearch]);
@@ -898,22 +1015,83 @@ export default function StorageManagerPrototype() {
     }
   }, [dashboardPage, totalPages]);
 
+  const isStorageSectionActive = currentView === "存储卷";
+  const isFileSectionActive = currentView === "文件管理";
+  const isRecycleSectionActive = currentView === "回收站";
+
   return (
     <div className="h-[100dvh] overflow-hidden bg-background p-0 text-foreground md:p-2">
       <div className="h-full w-full">
-        <div className="relative flex h-full w-full flex-col rounded-none border border-border bg-card text-card-foreground shadow-none md:rounded-[20px] md:shadow-xl">
-          <div
-            className={cn(
-              "relative flex h-full min-h-0 flex-col",
-              isCompactScreen ? "px-4 py-3 md:px-8 md:py-4" : "px-4 py-4 md:px-12 md:py-6",
-            )}
-          >
-            <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-border to-transparent md:inset-x-12" />
-            <div className="flex h-full min-h-0 flex-col">
+        <div className="relative flex h-full w-full rounded-none border border-border bg-card text-card-foreground shadow-none md:rounded-lg md:shadow-sm">
+          <div className="pointer-events-none absolute inset-x-0 top-14 z-10 h-px bg-border" />
+          <aside className="hidden h-full w-[272px] shrink-0 flex-col border-r border-border bg-zinc-50/80 md:flex">
+            <div className="flex h-14 items-center justify-between px-6">
+              <div className="flex items-center gap-2">
+                <Package2 className="h-4 w-4 text-foreground" />
+                <div className="text-lg font-semibold tracking-tight text-foreground">存储管理</div>
+              </div>
+            </div>
+
+            <nav className="mt-2 space-y-0.5 px-3">
+              <button
+                type="button"
+                className={cn(
+                  "flex h-9 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
+                  isStorageSectionActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent/80 hover:text-foreground",
+                )}
+                onClick={returnToDashboard}
+              >
+                <Package2 className="h-4 w-4" />
+                存储卷
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "flex h-9 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
+                  isFileSectionActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent/80 hover:text-foreground",
+                )}
+                onClick={() => {
+                  if (selectedPvc) {
+                    setCurrentView("文件管理");
+                  } else if (pvcsData.length > 0) {
+                    openBrowser(pvcsData[0]);
+                  }
+                }}
+              >
+                <FolderOpen className="h-4 w-4" />
+                文件管理
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "flex h-9 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
+                  isRecycleSectionActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent/80 hover:text-foreground",
+                )}
+                onClick={openRecycleView}
+              >
+                <Trash2 className="h-4 w-4" />
+                回收站
+                {recycleItems.length > 0 ? (
+                  <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1.5 text-[11px] font-semibold leading-none text-white">
+                    {recycleItems.length}
+                  </span>
+                ) : null}
+              </button>
+            </nav>
+          </aside>
+
+          <div className="min-w-0 flex h-full flex-1 flex-col">
+            <div
+              className={cn(
+                "flex h-full min-h-0 flex-col",
+                isCompactScreen ? "px-4 py-0 md:px-4" : "px-4 py-0 md:px-4",
+              )}
+            >
+              <div className="flex h-full min-h-0 flex-col">
               <section
                 className={cn(
                   "origin-top h-full min-h-0 transition-all duration-300",
-                  currentView === "全局大盘"
+                  currentView === "存储卷"
                     ? "block translate-y-0 opacity-100"
                     : "hidden -translate-y-2 opacity-0",
                 )}
@@ -921,13 +1099,13 @@ export default function StorageManagerPrototype() {
                 <div className={cn("flex h-full min-h-0 flex-col", isCompactScreen ? "gap-3" : "gap-4")}>
                   <div
                     className={cn(
-                      "flex flex-col border-b border-border md:flex-row md:items-end md:justify-between",
-                      isCompactScreen ? "gap-2 pb-3" : "gap-3 pb-4",
+                      "flex flex-col md:h-14 md:flex-row md:items-center md:justify-between",
+                      isCompactScreen ? "gap-2 py-3 md:py-0" : "gap-3 py-3 md:py-0",
                     )}
                   >
-                    <div>
-                      <h1 className={cn("font-semibold tracking-tight text-foreground", isCompactScreen ? "text-[26px]" : "text-[28px]")}>存储管家</h1>
-                      <p className="mt-1 text-sm text-muted-foreground">统一查看各命名空间的存储卷状态、容量健康度与资源浪费情况。</p>
+                    <div className="flex min-w-0 flex-col gap-1 md:flex-row md:items-center md:gap-4">
+                      <h1 className="shrink-0 text-lg font-semibold tracking-tight text-foreground">存储卷</h1>
+                      <p className="text-sm text-muted-foreground">统一查看各命名空间的存储卷状态、容量健康度与资源浪费情况。</p>
                     </div>
 
                     <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
@@ -1154,24 +1332,25 @@ export default function StorageManagerPrototype() {
               <section
                 className={cn(
                   "origin-top h-full min-h-0 transition-all duration-300",
-                  currentView === "文件浏览器"
+                  currentView === "文件管理"
                     ? "block translate-y-0 opacity-100"
                     : "hidden translate-y-2 opacity-0",
                 )}
               >
                 {selectedPvc && (
                   <div className="flex h-full min-h-0 flex-col gap-6">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <Button
-                        variant="ghost"
-                        className="w-full rounded-xl px-3 text-muted-foreground md:w-auto"
-                        onClick={returnToDashboard}
-                      >
-                        <ChevronLeft className="mr-1 h-4 w-4" />
-                        返回列表
-                      </Button>
+                    <div
+                      className={cn(
+                        "flex flex-col md:h-14 md:flex-row md:items-center md:justify-between",
+                        isCompactScreen ? "gap-2 py-3 md:py-0" : "gap-3 py-3 md:py-0",
+                      )}
+                    >
+                      <div className="flex min-w-0 flex-col gap-1 md:flex-row md:items-center md:gap-4">
+                        <h1 className="shrink-0 text-lg font-semibold tracking-tight text-foreground">文件管理</h1>
+                        <p className="text-sm text-muted-foreground">支持浏览目录、下载文件、在线编辑配置，并快速识别高风险日志文件。</p>
+                      </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
                         <Button className="rounded-xl bg-black text-white hover:bg-black/90" onClick={openUploadDialog}>
                           <Upload className="mr-1.5 h-4 w-4" />
                           上传文件
@@ -1185,8 +1364,20 @@ export default function StorageManagerPrototype() {
 
                     <Card className="flex min-h-0 flex-1 flex-col rounded-2xl border-border shadow-sm">
                       <CardHeader>
-                        <CardTitle>文件列表</CardTitle>
-                        <CardDescription>支持浏览目录、下载文件、在线编辑配置，并快速识别高风险日志文件。</CardDescription>
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <CardTitle>文件列表</CardTitle>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <p className="text-sm text-muted-foreground">当前存储卷：{selectedPvc.name}</p>
+                            <Button
+                              variant="ghost"
+                              className="rounded-xl px-3 text-muted-foreground"
+                              onClick={returnToDashboard}
+                            >
+                              <ChevronLeft className="mr-1 h-4 w-4" />
+                              返回存储卷列表
+                            </Button>
+                          </div>
+                        </div>
                       </CardHeader>
                       <CardContent className="flex min-h-0 flex-1 flex-col">
                         <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border">
@@ -1388,7 +1579,15 @@ export default function StorageManagerPrototype() {
                                                 <Edit3 className="h-4 w-4" />
                                               </Button>
                                             )}
-                                            <Button variant="ghost" size="icon" className="rounded-lg text-destructive hover:bg-accent hover:text-destructive">
+                                            <Button
+                                              variant="ghost"
+                                              size="icon"
+                                              className="rounded-lg text-destructive hover:bg-accent hover:text-destructive"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                setPendingDeleteFile({ node, path });
+                                              }}
+                                            >
                                               <Trash2 className="h-4 w-4" />
                                             </Button>
                                           </>
@@ -1413,7 +1612,81 @@ export default function StorageManagerPrototype() {
                   </div>
                 )}
               </section>
+
+              <section
+                className={cn(
+                  "origin-top h-full min-h-0 transition-all duration-300",
+                  currentView === "回收站"
+                    ? "block translate-y-0 opacity-100"
+                    : "hidden translate-y-2 opacity-0",
+                )}
+              >
+                <div className="flex h-full min-h-0 flex-col gap-4">
+                  <div
+                    className={cn(
+                      "flex flex-col md:h-14 md:flex-row md:items-center md:justify-between",
+                      isCompactScreen ? "gap-2 py-3 md:py-0" : "gap-3 py-3 md:py-0",
+                    )}
+                  >
+                    <div className="flex min-w-0 flex-col gap-1 md:flex-row md:items-center md:gap-4">
+                      <h1 className="shrink-0 text-lg font-semibold tracking-tight text-foreground">回收站</h1>
+                      <p className="text-sm text-muted-foreground">管理误删文件，支持恢复与永久删除。</p>
+                    </div>
+
+                    <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
+                      <Button className="rounded-xl bg-black text-white hover:bg-black/90" onClick={() => setClearRecycleDialogOpen(true)}>
+                        清空回收站
+                      </Button>
+                    </div>
+                  </div>
+
+                  <Card className="flex min-h-0 flex-1 flex-col rounded-2xl border-border bg-muted/30 shadow-sm">
+                    <CardContent className={cn("flex min-h-0 flex-1 flex-col md:px-6", isCompactScreen ? "px-4 pb-4 pt-4 md:pb-4" : "px-5 pb-5 pt-5 md:pb-6")}>
+                      <div className="rounded-xl border border-border bg-card px-5 py-2 shadow-sm md:px-6">
+                        <div className="grid min-h-10 grid-cols-[1.5fr_1.9fr_0.9fr_1.7fr_1.3fr_0.9fr] items-center gap-4 text-sm font-semibold text-muted-foreground">
+                          <div>名称</div>
+                          <div>原位置</div>
+                          <div>大小</div>
+                          <div>删除时间</div>
+                          <div>剩余保留时间</div>
+                          <div className="text-left">操作</div>
+                        </div>
+                      </div>
+
+                      <div className={cn(isCompactScreen ? "mt-3 flex flex-col gap-3" : "mt-4 flex flex-col gap-4")}>
+                        {recycleItems.length > 0 ? (
+                          recycleItems.map((item) => (
+                            <div
+                              key={item.id}
+                              className={cn(
+                                "grid grid-cols-[1.5fr_1.9fr_0.9fr_1.7fr_1.3fr_0.9fr] gap-4 rounded-xl border border-border bg-card px-5 shadow-sm transition-colors hover:bg-accent/40 md:px-6",
+                                isCompactScreen ? "py-3.5" : "py-4",
+                              )}
+                            >
+                              <div className="self-center text-sm font-medium text-foreground">{item.name}</div>
+                              <div className="self-center text-sm text-muted-foreground">{item.originalPath}</div>
+                              <div className="self-center text-sm text-foreground">{item.size}</div>
+                              <div className="self-center text-sm text-foreground">{item.deletedAt}</div>
+                              <div className="self-center text-sm text-foreground">{item.remainingDays} 天</div>
+                              <div className="flex items-center justify-start">
+                                <Button variant="outline" className="h-9 rounded-lg border-border px-4" onClick={() => setRestoringRecycleItem(item)}>
+                                  恢复
+                                </Button>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground md:px-6">
+                            回收站为空
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </section>
             </div>
+          </div>
           </div>
         </div>
       </div>
@@ -1427,7 +1700,7 @@ export default function StorageManagerPrototype() {
           }
         }}
       >
-        <DialogContent className="max-w-xl rounded-3xl border-border">
+        <DialogContent className="max-w-lg rounded-3xl border-border">
           <DialogHeader>
             <DialogTitle className="text-xl">新建存储卷</DialogTitle>
             <DialogDescription>创建后暂不分配到特定实例，可在后续流程中再进行挂载。</DialogDescription>
@@ -1507,7 +1780,7 @@ export default function StorageManagerPrototype() {
           }
         }}
       >
-        <DialogContent className="max-w-4xl rounded-3xl border-border p-0">
+        <DialogContent className="max-w-3xl rounded-3xl border-border p-0">
           <DialogHeader className="border-b border-border px-6 py-5">
             <DialogTitle className="text-xl">{editorFile?.name}</DialogTitle>
             <DialogDescription>在线修改配置文件内容，保存后将同步到当前存储卷。</DialogDescription>
@@ -1539,7 +1812,7 @@ export default function StorageManagerPrototype() {
           }
         }}
       >
-        <DialogContent className="max-w-xl rounded-3xl border-border">
+        <DialogContent className="max-w-lg rounded-3xl border-border">
           <DialogHeader>
             <DialogTitle className="text-xl">新建文件夹</DialogTitle>
             <DialogDescription>
@@ -1607,7 +1880,7 @@ export default function StorageManagerPrototype() {
           }
         }}
       >
-        <DialogContent className="max-w-xl rounded-3xl border-border">
+        <DialogContent className="max-w-lg rounded-3xl border-border">
           <DialogHeader>
             <DialogTitle className="text-xl">上传文件</DialogTitle>
             <DialogDescription>
@@ -1694,7 +1967,7 @@ export default function StorageManagerPrototype() {
           }
         }}
       >
-        <DialogContent className="max-w-xl rounded-3xl border-border">
+        <DialogContent className="max-w-lg rounded-3xl border-border">
           <DialogHeader>
             <DialogTitle className="text-xl">扩容存储卷</DialogTitle>
             <DialogDescription>
@@ -1755,7 +2028,7 @@ export default function StorageManagerPrototype() {
           }
         }}
       >
-        <DialogContent className="max-w-xl rounded-3xl border-border">
+        <DialogContent className="max-w-lg rounded-3xl border-border">
           <DialogHeader>
             <DialogTitle className="text-xl">确认删除存储卷</DialogTitle>
             <DialogDescription>
@@ -1799,6 +2072,98 @@ export default function StorageManagerPrototype() {
               className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={handleDeletePvc}
             >
+              确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={clearRecycleDialogOpen}
+        onOpenChange={setClearRecycleDialogOpen}
+      >
+        <DialogContent className="max-w-lg rounded-3xl border-border">
+          <DialogHeader>
+            <DialogTitle className="text-xl">确认清空回收站</DialogTitle>
+            <DialogDescription>
+              清空后，回收站内文件将永久删除且不可恢复，请谨慎操作。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl border-border" onClick={() => setClearRecycleDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                setRecycleItems([]);
+                setClearRecycleDialogOpen(false);
+              }}
+            >
+              确认清空
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(restoringRecycleItem)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRestoringRecycleItem(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-3xl border-border">
+          <DialogHeader>
+            <DialogTitle className="text-xl">确认恢复文件</DialogTitle>
+            <DialogDescription>
+              恢复后，文件将从回收站移除并返回原位置。
+            </DialogDescription>
+          </DialogHeader>
+
+          {restoringRecycleItem && (
+            <div className="rounded-2xl border border-border bg-accent p-4 text-sm text-accent-foreground">
+              将要恢复：<span className="font-semibold text-foreground">{restoringRecycleItem.name}</span>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl border-border" onClick={() => setRestoringRecycleItem(null)}>
+              取消
+            </Button>
+            <Button className="rounded-xl bg-black text-white hover:bg-black/90" onClick={handleConfirmRestoreRecycleItem}>
+              确认恢复
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingDeleteFile)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDeleteFile(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg rounded-3xl border-border">
+          <DialogHeader>
+            <DialogTitle className="text-xl">确认删除文件</DialogTitle>
+            <DialogDescription>
+              删除后文件将移入回收站，可在保留期内恢复。
+            </DialogDescription>
+          </DialogHeader>
+          {pendingDeleteFile && (
+            <div className="rounded-2xl border border-border bg-accent p-4 text-sm text-accent-foreground">
+              将要删除：<span className="font-semibold text-foreground">{pendingDeleteFile.node.name}</span>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl border-border" onClick={() => setPendingDeleteFile(null)}>
+              取消
+            </Button>
+            <Button className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={handleConfirmDeleteFile}>
               确认删除
             </Button>
           </DialogFooter>
